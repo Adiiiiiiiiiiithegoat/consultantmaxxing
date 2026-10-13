@@ -80,7 +80,7 @@ class ScriptedLLM:
                     {"id": "H1", "status": "supported", "evidence": ["F3", "F999"],
                      "reasoning": "ingredients +30%"},
                     {"id": "H2", "status": "supported", "evidence": ["F5"], "reasoning": "x"},
-                    {"id": "H3", "status": "killed", "evidence": [], "reasoning": "steady"}],
+                    {"id": "H3", "status": "killed", "evidence": ["F1"], "reasoning": "steady"}],
                 "analyses_needed": ["Count the quantitative facts available"],
                 "next_questions": [], "new_hypotheses": [], "done": True}
 
@@ -300,3 +300,55 @@ def test_token_estimate_is_consistent():
     assert estimate("dev", "real")["total"] > dev["total"] - 20_000   # RA replaces interviewer
     d5, d15 = phase7_days(n_cases=5), phase7_days(n_cases=15)
     assert d15["days"] > d5["days"] > 0
+
+
+def test_estimates_alone_cannot_settle_a_hypothesis(tmp_path):
+    class Ungrounded(ScriptedLLM):
+        def Assessment(self, user):
+            out = super().Assessment(user)
+            out["updates"] = [{"id": "H1", "status": "supported", "evidence": ["S1"],
+                               "reasoning": "an estimate"},
+                              {"id": "H3", "status": "killed", "evidence": [],
+                               "reasoning": "no evidence"}]
+            return out
+    eng, ws, _ = engagement(tmp_path, Ungrounded(), eid="ungrounded")
+    eng.run()
+    assert ws.hypothesis("H1").status == "needs_more"
+    assert ws.hypothesis("H3").status == "needs_more"
+
+
+def test_synthesis_budget_stop_delivers_latest_draft_with_unresolved_points(tmp_path):
+    class TightSynthesis(ScriptedLLM):
+        def structured(self, role, msgs, schema):
+            if schema.__name__ == "Draft" and self.reviews >= 1:
+                raise BudgetExceeded("tokens budget: scripted synthesis cap")
+            return super().structured(role, msgs, schema)
+    eng, ws, _ = engagement(tmp_path, TightSynthesis(), eid="tight")
+    out = eng.run()
+    assert "deliver" in ws.state.steps_done and out["stopped"]
+    memo = (ws.dir / "deliverables/memo.md").read_text(encoding="utf-8")
+    assert "Unresolved review points" in memo and "no number" in memo
+    assert any("Synthesis stopped" in q for q in ws.state.open_questions)
+
+
+def test_research_questions_get_engagement_context(tmp_path, monkeypatch):
+    import consultant.agents.engagement_manager as em
+    seen = []
+
+    class FakeRA:
+        def __init__(self, *a, **k):
+            pass
+
+        def research(self, q, hypothesis_id=None, context=""):
+            seen.append(context)
+            from consultant.agents.research_associate import Brief, ResearchResult
+            return ResearchResult(q, Brief(answer="", value=None, unit="", period="",
+                                           fact_ids=[], confidence="low", gaps=""), [], [],
+                                  spent={"tokens": 10})
+    monkeypatch.setattr(em, "ResearchAssociate", FakeRA)
+    ws = Workspace.create("ctx", root=tmp_path, mode="real", problem_statement="p",
+                          scope={"entity": "Acme Ltd", "industry": "Paints",
+                                 "restated_question": "Why did Acme's margin change?"})
+    e = Engagement(ScriptedLLM(), ws, web=object(), retriever=Retriever([]))
+    e._research(["What was the EBITDA margin in FY2023-24?"])
+    assert seen and "Acme Ltd" in seen[0] and "Paints" in seen[0]

@@ -93,12 +93,33 @@ PLAN_SYS = ("Build a MECE issue tree for the question (flat list of nodes with p
             "root has parent null) and 3-6 falsifiable hypotheses on its most likely branches, "
             "ranked. Each hypothesis says what would prove or kill it and which data questions "
             "to ask. Avoid simply adopting the client's initial belief: include competing "
-            "explanations.")
+            "explanations. Data questions must be self-contained search questions: name the "
+            "company/entity, the metric and the period (e.g. 'Acme Ltd consolidated EBITDA "
+            "margin FY2023-24'), never 'the company'. If the client did not state the "
+            "direction or size of a change, the top-priority question must establish it "
+            "before any hypothesis explains it.")
 ASSESS_SYS = ("Update every hypothesis from the evidence: supported, killed, needs_more or "
-              "open, citing evidence ids (F#, A#, S#). Never cite an id that isn't listed. Ask "
+              "open, citing evidence ids (F#, A#, S#). Only facts (F#) or analyses (A#) can "
+              "support or kill a hypothesis; estimates (S#) alone leave it needs_more. Never "
+              "cite an id that isn't listed. Ask "
               "for quantitative analyses where numbers would settle a hypothesis. Propose the "
               "next questions for unresolved priority hypotheses. Set done when the priority "
               "hypotheses are resolved or more evidence would not change the answer.")
+
+
+def fallback_draft(ws: Workspace) -> storyliner.Draft:
+    """Deterministic draft when no LLM draft could be written (budget exhausted): report what
+    is known, claim nothing new, mark confidence low."""
+    st = ws.state
+    status = "; ".join(f"{h.id} {h.status}: {h.statement}" for h in st.hypotheses) or "none"
+    return storyliner.Draft(
+        answer="No answer could be synthesised within the budget. Hypothesis status so far: "
+               f"{status}.",
+        arguments=[storyliner.Argument(title="Investigation was cut short by the budget cap",
+                                       text="See the open questions; resume or rerun with a "
+                                            "larger profile.", refs=[])],
+        risks=["Conclusions here are incomplete."], next_steps=["Resume with a larger budget."],
+        open_questions=list(st.open_questions), confidence="low", slides=[])
 
 
 def evidence_text(ws: Workspace, verified_only: bool = False, limit: int = 60) -> str:
@@ -183,10 +204,15 @@ class Engagement:
         eid = self.ws.state.engagement_id
         caps = {"searches": 3, "pages": 6, "tokens": 20000}
 
+        sc = self.ws.state.scope
+        context = (f"CLIENT / ENTITY: {sc.get('entity', '')} | INDUSTRY: "
+                   f"{sc.get('industry', '')} | ENGAGEMENT QUESTION: "
+                   f"{sc.get('restated_question', '')}")
+
         def one(q):
             ra = ResearchAssociate(self.llm, self.web, self.ws.facts, eid, caps=caps,
                                    as_of=self.as_of)
-            return ra.research(q, hypothesis_id=hid)
+            return ra.research(q, hypothesis_id=hid, context=context)
         with ThreadPoolExecutor(max_workers=2) as pool:  # parallel, still rate-limited
             for res in pool.map(one, questions):
                 for kind in ("tokens", "calls", "searches", "pages"):
@@ -261,7 +287,11 @@ class Engagement:
         for u in a.updates:
             if any(h.id == u.id for h in st.hypotheses):
                 facts = [int(r[1:]) for r in u.evidence if r in known and r[0] == "F"]
-                self.ws.update_hypothesis(u.id, status=u.status, evidence_fact_ids=facts,
+                grounded = facts or any(r in known and r[0] == "A" for r in u.evidence)
+                status = u.status
+                if status in ("supported", "killed") and not grounded:
+                    status = "needs_more"  # estimates alone can't settle a hypothesis
+                self.ws.update_hypothesis(u.id, status=status, evidence_fact_ids=facts,
                                           notes=u.reasoning)
         for h in a.new_hypotheses:
             if not any(x.id == h.id for x in st.hypotheses):
@@ -334,14 +364,28 @@ class Engagement:
                 ws.save()
         if st.mode == "real" and self.web is not None:
             ws.step("verify", self._finalise_real_mode)
+        draft, rv = None, None
         with self.llm.scoped(self.synthesis):
-            draft = storyliner.Draft(**ws.step(
-                "story0", lambda: storyliner.write(self.llm, self._brief()).model_dump()))
-            for r in range(MAX_REVIEW_ROUNDS):
-                rv = partner.Review(**ws.step(f"review{r}", lambda d=draft: self._review(d)))
-                if rv.verdict == "approve" or r == MAX_REVIEW_ROUNDS - 1:
-                    break
-                draft = storyliner.Draft(**ws.step(f"story{r + 1}", lambda rv=rv: storyliner.write(
-                    self.llm, self._brief(), partner.format_review(rv)).model_dump()))
+            try:
+                draft = storyliner.Draft(**ws.step(
+                    "story0", lambda: storyliner.write(self.llm, self._brief()).model_dump()))
+                for r in range(MAX_REVIEW_ROUNDS):
+                    rv = partner.Review(**ws.step(f"review{r}", lambda d=draft: self._review(d)))
+                    if rv.verdict == "approve" or r == MAX_REVIEW_ROUNDS - 1:
+                        break
+                    draft = storyliner.Draft(**ws.step(
+                        f"story{r + 1}", lambda rv=rv: storyliner.write(
+                            self.llm, self._brief(), partner.format_review(rv)).model_dump()))
+                    rv = None  # the new draft hasn't been reviewed yet
+            except BudgetExceeded as e:
+                stopped = stopped or str(e)
+                ws.decide("system", "synthesis stopped: budget cap", str(e))
+                st.open_questions.append("Synthesis stopped at the budget cap: the latest draft "
+                                         "was delivered without a further review round.")
+        if draft is None:
+            draft = fallback_draft(ws)
+        if rv is not None and rv.verdict != "approve":
+            st.notes["unresolved_review"] = [i.model_dump() for i in rv.blocking()]
+        ws.save()
         ws.step("deliver", lambda: deliverables.render(ws, draft))
         return {"stopped": stopped, "draft": draft, "deliverables": st.deliverables}

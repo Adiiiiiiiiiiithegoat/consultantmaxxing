@@ -18,8 +18,14 @@ def memo_md(ws, d: Draft, issues: list[dict]) -> str:
     args = "\n\n".join(f"### {i}. {a.title}\n{a.text}  \n*Evidence: {', '.join(a.refs)}*"
                        for i, a in enumerate(d.arguments, 1))
     flagged = ""
+    unresolved = st.notes.get("unresolved_review") or []
+    if unresolved:
+        flagged += ("\n\n## ⚠ Unresolved review points\nThe partner's last review raised these "
+                    "and no further revision fitted the budget:\n" +
+                    _bullets(f"[{i['severity']}] {i['kind']} @ {i['where']}: {i['detail']}"
+                             for i in unresolved))
     if issues:
-        flagged = ("\n\n## ⚠ Validation flags\nThese items could not be traced to cited "
+        flagged += ("\n\n## ⚠ Validation flags\nThese items could not be traced to cited "
                    "evidence and must not be relied on:\n" +
                    _bullets(f"{i['where']}: {i['detail']}" for i in issues))
     return (f"# {st.scope.get('restated_question') or st.problem_statement}\n\n"

@@ -71,10 +71,10 @@ def analyse(llm, ws: Workspace, request: str, hypothesis_ids: list[str] | None =
         rec = ws.run_analysis(plan.name, plan.purpose, preamble(facts, assumptions) + plan.code,
                               hypothesis_ids=hypothesis_ids,
                               formulas=[r.model_dump() for r in plan.excel])
-        if rec.ok and rec.result is not None and not rec.formula_issues:
+        if rec.ok and rec.result and not rec.formula_issues:
             return rec
         problem = rec.error or ("; ".join(rec.formula_issues) if rec.formula_issues
-                                else "the script did not set RESULT")
+                                else "the script did not set a non-empty RESULT")
         msgs += [{"role": "assistant", "content": plan.code},
                  {"role": "user", "content": f"That failed: {problem}. Fix the script."}]
     return rec
