@@ -157,6 +157,8 @@ class Engagement:
                                    "calls": self.prof["max_calls"],
                                    "searches": self.prof["max_searches"],
                                    "pages": self.prof["max_pages"]})
+        # synthesis is guaranteed the rest of the cap; it also gets whatever investigation
+        # leaves unspent (set in run(), once investigation is over)
         self.synthesis = Budget({"tokens": cap - int(cap * INVESTIGATE_SHARE)})
         if ws.state.mode == "case" and interviewer is None:
             raise ValueError("case mode needs an interviewer (the simulated client)")
@@ -369,6 +371,12 @@ class Engagement:
         if st.mode == "real" and self.web is not None:
             ws.step("verify", self._finalise_real_mode)
         draft, rv = None, None
+        # ponytail: spend is noted per run; a run killed mid-investigation (quota) isn't counted
+        st.notes["investigate_tokens"] = (st.notes.get("investigate_tokens", 0)
+                                          + self.investigate.spent["tokens"])
+        self.synthesis.limits["tokens"] = max(self.synthesis.limits["tokens"],
+                                              self.prof["max_tokens"]
+                                              - st.notes["investigate_tokens"])
         with self.llm.scoped(self.synthesis):
             try:
                 draft = storyliner.Draft(**ws.step(

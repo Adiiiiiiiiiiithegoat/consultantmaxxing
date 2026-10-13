@@ -343,6 +343,20 @@ def test_synthesis_budget_stop_delivers_latest_draft_with_unresolved_points(tmp_
     assert any("Synthesis stopped" in q for q in ws.state.open_questions)
 
 
+
+def test_synthesis_gets_the_reserve_plus_unspent_investigation_tokens(tmp_path):
+    # system-train: investigation used 23-34K of its 42K share while synthesis stopped at its
+    # fixed 18K, though the runs were far under the 60K run cap
+    cap = 60000
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM(), eid="lend")
+    eng.investigate.charge("tokens", 25000)
+    eng.run()
+    assert eng.synthesis.limits["tokens"] == cap - 25000      # total still capped at 60K
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM(), eid="reserve")
+    eng.investigate.charge("tokens", 50000)
+    eng.run()
+    assert eng.synthesis.limits["tokens"] == cap - int(cap * 0.7)  # reserve always kept
+
 def test_research_questions_get_engagement_context(tmp_path, monkeypatch):
     import consultant.agents.engagement_manager as em
     seen = []
