@@ -4,6 +4,8 @@
 # Checked 2026-10-13 against GET /openai/v1/models + x-ratelimit headers on this account.
 # Groq free tier (per model, per org): gpt-oss-120b / gpt-oss-20b / qwen3.8-27b each
 # 30 RPM, 1K RPD, 8K TPM, 200K TPD. Each model has its own quota, so roles are spread.
+# Limits below are per key (per Groq org): with several comma-separated keys in
+# GROQ_API_KEY the client keeps separate limiter state per key and rotates.
 # 8K TPM also caps a single request: prompt + max_tokens must fit under it.
 # qwen3.8-27b also has an undocumented 1K output-tokens/min (OTPM) cap. Groq checks it at
 # admission against an estimate taken from recent reply lengths, so once a reply runs past 1K,

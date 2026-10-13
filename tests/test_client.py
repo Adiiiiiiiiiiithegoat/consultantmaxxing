@@ -6,7 +6,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from consultant.llm import LLM, StructuredOutputError
+from consultant.llm import LLM, QuotaExhausted, StructuredOutputError
 from consultant.llm.context import estimate_tokens, fit
 from consultant.tracing import Budget, BudgetExceeded, Tracer
 from tests.test_limiter import Clock
@@ -234,3 +234,75 @@ def test_disk_cache_concurrent_writes_to_same_key(tmp_path):
         list(pool.map(lambda i: c.set("k" * 64, {"v": 1}), range(64)))
     assert c.get("k" * 64) == {"v": 1}
     assert not list(tmp_path.rglob("*.tmp"))
+
+
+# ---- multi-key rotation ---------------------------------------------------------------------
+ROT_CFG = {
+    "providers": {"fake": {"base_url": "http://fake/v1", "api_key_env": "FAKE_KEYS"}},
+    "models": {"fake/m": {"rpd": 1}, "fake/backup": {}},
+    "roles": {"r": {"model": "fake/m", "params": {"max_tokens": 100}},
+              "fb": {"model": "fake/m", "params": {"max_tokens": 100},
+                     "fallback": {"model": "fake/backup"}}},
+}
+
+
+class KeyServer:
+    """Answers with the key that was used; `deny` keys get a 429 with a long retry-after."""
+
+    def __init__(self, deny=()):
+        self.deny, self.used = set(deny), []
+
+    def __call__(self, request):
+        key = request.headers["authorization"].removeprefix("Bearer ")
+        self.used.append(key)
+        if key in self.deny:
+            return httpx.Response(429, headers={"retry-after": "3600"}, json={"error": {}})
+        return chat(f"served by {key}")
+
+
+def rot_llm(tmp_path, server, monkeypatch, keys="k0,k1,k2", tracer=None):
+    monkeypatch.setenv("FAKE_KEYS", keys)
+    clock = Clock()
+    return LLM(ROT_CFG, cache_dir=tmp_path / "c", sleep=clock.sleep, clock=clock, tracer=tracer,
+               http_client=httpx.Client(transport=httpx.MockTransport(server))), clock
+
+
+def test_rotates_to_next_key_when_one_is_out_of_quota(tmp_path, monkeypatch):
+    srv = KeyServer()
+    llm, clock = rot_llm(tmp_path, srv, monkeypatch)
+    outs = [llm.complete("r", [{"role": "user", "content": f"q{i}"}]).content for i in range(3)]
+    assert outs == ["served by k0", "served by k1", "served by k2"]   # rpd=1 per key
+    assert clock.slept == []
+    with pytest.raises(QuotaExhausted, match="all 3 keys"):
+        llm.complete("r", [{"role": "user", "content": "q4"}])
+
+
+def test_server_429_on_one_key_moves_to_next_and_blocks_it(tmp_path, monkeypatch):
+    ROT_CFG["models"]["fake/m"] = {}                                   # no local limits
+    try:
+        srv = KeyServer(deny={"k0"})
+        llm, clock = rot_llm(tmp_path, srv, monkeypatch, keys="k0,k1")
+        assert llm.complete("r", MSG).content == "served by k1"
+        assert clock.slept == []                                       # no hour-long sleep
+        llm.complete("r", [{"role": "user", "content": "again"}])
+        assert srv.used == ["k0", "k1", "k1"]                          # k0 not retried
+    finally:
+        ROT_CFG["models"]["fake/m"] = {"rpd": 1}
+
+
+def test_all_keys_out_falls_back_to_backup_model(tmp_path, monkeypatch):
+    srv = KeyServer()
+    llm, _ = rot_llm(tmp_path, srv, monkeypatch, keys="k0")
+    llm.complete("fb", MSG)
+    out = llm.complete("fb", [{"role": "user", "content": "second"}])
+    assert out.model == "fake/backup"
+
+
+def test_trace_records_key_index_never_the_key(tmp_path, monkeypatch):
+    tracer = Tracer(root=tmp_path / "t")
+    llm, _ = rot_llm(tmp_path, KeyServer(), monkeypatch, keys="secret-a,secret-b",
+                     tracer=tracer)
+    llm.complete("r", MSG)
+    llm.complete("r", [{"role": "user", "content": "x"}])
+    assert [e["key_index"] for e in tracer.events("llm")] == [0, 1]
+    assert "secret-" not in tracer.path.read_text()

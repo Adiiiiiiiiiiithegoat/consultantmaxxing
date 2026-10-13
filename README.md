@@ -35,7 +35,7 @@ uv run pytest                 # offline suite, no API calls
 ### Keys (`.env`)
 | Variable | Needed for |
 |---|---|
-| `GROQ_API_KEY` | the default model plan (Groq free tier works, slowly) |
+| `GROQ_API_KEY` | the default model plan (Groq free tier works, slowly). Comma-separate several keys to rotate between them; limits are per Groq org, so only keys from different orgs add capacity |
 | `OLLAMA_BASE_URL` | local models (default `http://localhost:11434`) |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` | if you point roles at those providers |
 | `CONSULTANT_BLOCK_MODELS` | optional: comma-separated models the client must refuse |

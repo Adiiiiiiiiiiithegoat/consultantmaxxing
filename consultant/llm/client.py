@@ -86,25 +86,42 @@ class LLM:
         if self.tracer:
             self.tracer.log(kind, **data)
 
-    def limiter(self, model: str) -> RateLimiter:
-        if model not in self._limiters:
+    def _keys(self, provider: str) -> list[str]:
+        """API keys for a provider. The env var may hold several, comma-separated; each key
+        (a separate account/org) gets its own rate-limit state and calls rotate across them."""
+        p = self.cfg["providers"][provider]
+        raw = p.get("api_key") or os.environ.get(p.get("api_key_env", ""), "")
+        keys = [k.strip() for k in raw.split(",") if k.strip()]
+        if not keys:
+            raise LLMError(f"{p.get('api_key_env')} is not set (provider {provider})")
+        return keys
+
+    def limiter(self, model: str, key_index: int = 0) -> RateLimiter:
+        if (model, key_index) not in self._limiters:
             spec = self.cfg["models"].get(model, {})
-            safe = re.sub(r"[^\w.-]", "_", model)
-            self._limiters[model] = RateLimiter(
+            safe = re.sub(r"[^\w.-]", "_", model) + (f".k{key_index}" if key_index else "")
+            self._limiters[(model, key_index)] = RateLimiter(
                 *(spec.get(k) for k in ("rpm", "tpm", "rpd", "tpd", "otpm")),
                 state_path=self.state_dir / f"{safe}.json", sleep=self.sleep, clock=self.clock)
-        return self._limiters[model]
+        return self._limiters[(model, key_index)]
 
-    def _client(self, provider: str) -> openai.OpenAI:
-        if provider not in self._clients:
+    def _client(self, provider: str, key_index: int = 0) -> openai.OpenAI:
+        if (provider, key_index) not in self._clients:
             p = self.cfg["providers"][provider]
-            key = p.get("api_key") or os.environ.get(p.get("api_key_env", ""))
-            if not key:
-                raise LLMError(f"{p.get('api_key_env')} is not set (provider {provider})")
-            self._clients[provider] = openai.OpenAI(
-                base_url=p["base_url"], api_key=key, max_retries=0, timeout=180,
-                http_client=self.http_client)
-        return self._clients[provider]
+            self._clients[(provider, key_index)] = openai.OpenAI(
+                base_url=p["base_url"], api_key=self._keys(provider)[key_index], max_retries=0,
+                timeout=180, http_client=self.http_client)
+        return self._clients[(provider, key_index)]
+
+    def _key_order(self, model: str, n_keys: int, est: int, max_out: int) -> list[int]:
+        """Keys that can serve this call, least-waiting first; keys out of quota are skipped."""
+        waits = []
+        for i in range(n_keys):
+            try:
+                waits.append((self.limiter(model, i).wait_time(est, max_out), i))
+            except QuotaExhausted:
+                continue
+        return [i for _, i in sorted(waits)]
 
     def _budgets(self) -> list[Budget]:
         return [b for b in (self.budget, getattr(self._scope, "budget", None)) if b]
@@ -192,16 +209,27 @@ class LLM:
         for b in ([] if local else self._budgets()):
             b.check("calls")
             b.check("tokens", est)
-        limiter = self.limiter(model)
-        ev = limiter.acquire(est, max_out)
-
         kw = {k: v for k, v in params.items() if v is not None}  # null = unset this param
         if tools:
             kw["tools"] = tools
         if json_mode and self.cfg["providers"][provider].get("json_mode", True):
             kw["response_format"] = {"type": "json_object"}
-        t0 = time.time()
-        resp = self._create(provider, name, model, messages, kw, limiter)
+
+        n_keys = len(self._keys(provider))
+        last: QuotaExhausted | None = None
+        resp = None
+        for ki in self._key_order(model, n_keys, est, max_out):
+            limiter = self.limiter(model, ki)
+            try:
+                ev = limiter.acquire(est, max_out)
+                t0 = time.time()
+                resp = self._create(provider, name, model, messages, kw, limiter, ki)
+                break
+            except QuotaExhausted as e:  # this key is out: try the next account's key
+                last = e
+                self._trace("key_exhausted", model=model, key_index=ki, error=str(e)[:200])
+        if resp is None:
+            raise last or QuotaExhausted(f"{model}: daily quota exhausted on all {n_keys} keys")
         secs = time.time() - t0
 
         choice = resp.choices[0]
@@ -224,13 +252,13 @@ class LLM:
         cost = (usage.get("prompt_tokens", 0) * spec.get("price_in", 0)
                 + usage.get("completion_tokens", 0) * spec.get("price_out", 0)) / 1e6
         self._trace("llm", role=role, model=model, cached=False, key=key, seconds=round(secs, 3),
-                    cost_usd=cost, finish_reason=choice.finish_reason, **usage)
+                    cost_usd=cost, finish_reason=choice.finish_reason, key_index=ki, **usage)
         if use_cache:
             self.cache.set(key, {"request": payload, "completion": asdict(out)})
         return out
 
-    def _create(self, provider, name, model, messages, kw, limiter):
-        client = self._client(provider)
+    def _create(self, provider, name, model, messages, kw, limiter, key_index=0):
+        client = self._client(provider, key_index)
         for attempt in range(self.max_retries + 1):
             try:
                 return client.chat.completions.create(model=name, messages=messages, **kw)
@@ -239,6 +267,7 @@ class LLM:
                     raise RequestTooLarge(f"{model}: {str(e)[:300]}") from e
                 wait = _retry_after(e) or 2.0 ** attempt
                 if wait > limiter.max_wait:
+                    limiter.block_for(wait)  # the server knows best: skip this key until then
                     raise QuotaExhausted(f"{model}: server says retry in {wait:.0f}s") from e
                 err = e
             except (openai.APITimeoutError, openai.InternalServerError) as e:

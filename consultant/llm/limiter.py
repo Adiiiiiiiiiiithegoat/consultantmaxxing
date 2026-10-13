@@ -70,8 +70,18 @@ class RateLimiter:
         if state_path and state_path.exists():
             self.events.extend([*e, 0][:3] for e in json.loads(state_path.read_text()))
 
+    def block_for(self, seconds: float) -> None:
+        """Server-reported quota exhaustion (429 with a long retry-after): refuse until then.
+        ponytail: in-memory only; after a restart one call re-learns it from the server."""
+        self.blocked_until = max(getattr(self, "blocked_until", 0.0), self.clock() + seconds)
+
     def wait_time(self, tokens: int, out: int = 0) -> float:
         now = self.clock()
+        if (left := getattr(self, "blocked_until", 0.0) - now) > 0:
+            if left > self.max_wait:
+                raise QuotaExhausted(f"server-reported quota exhaustion; retry in "
+                                     f"{left / 60:.0f} min")
+            return left
         while self.events and self.events[0][0] <= now - DAY:
             self.events.popleft()
         day = max(_bucket_wait(self.events, now, self.rpd, 1),

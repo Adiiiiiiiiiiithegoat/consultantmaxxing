@@ -79,6 +79,14 @@ def estimate(profile_name: str = "dev", mode: str = "case", cfg: dict | None = N
             "total": round(sum(per_model.values())), "assumptions": a}
 
 
+def _n_keys(cfg: dict, model: str) -> int:
+    """Rotating keys (comma-separated in the provider's env var) multiply the daily quota."""
+    import os
+    p = cfg["providers"].get(model.split("/", 1)[0], {})
+    raw = p.get("api_key") or os.environ.get(p.get("api_key_env", ""), "")
+    return max(1, len([k for k in raw.split(",") if k.strip()]))
+
+
 def phase7_days(cfg: dict | None = None, n_cases: int = 15, profile_name: str = "dev",
                 backtests: int = 3) -> dict:
     """Days to run Phase 7 (system + judge on n test cases, baseline on n, real-mode
@@ -98,7 +106,7 @@ def phase7_days(cfg: dict | None = None, n_cases: int = 15, profile_name: str = 
     days = {}
     for m, t in need.items():
         tpd = cfg["models"].get(m, {}).get("tpd")
-        days[m] = round(t / tpd, 1) if tpd else 0.0
+        days[m] = round(t / (tpd * _n_keys(cfg, m)), 1) if tpd else 0.0
     return {"tokens_per_model": {m: round(t) for m, t in need.items()}, "days_per_model": days,
             "days": max(days.values()) if days else 0.0, "n_cases": n_cases}
 

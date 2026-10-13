@@ -525,3 +525,16 @@ uv run consult eval tokens --traces eval-system-train                   # 5.4
 uv run consult eval system --split test --name system-test
 uv run consult eval backtests && uv run consult report                  # EVAL_REPORT.md
 ```
+
+### 2026-10-14: Groq key rotation
+- `GROQ_API_KEY` accepts several comma-separated keys. The client keeps a separate limiter
+  per (model, key), sends each call to the key with the shortest wait, and moves to the next
+  key when one is out of daily quota (local or server-reported via a 429 with a long
+  retry-after, after which that key is skipped until the reported time). Falls back to
+  another model only when all keys are out. Traces record `key_index`, never the key.
+- Checked live with one tiny call per key: the three keys have independent request counters,
+  i.e. separate Groq organizations, so rotation triples free-tier capacity. (Keys from the
+  same org would share one quota and add nothing.)
+- `consult eval tokens` now divides by the number of keys: Phase 7 on the current plan is
+  ≥0.4 days for 5 cases and ≥0.9 days for 15 (token-bound; previously 1.1 / 2.7).
+- The pinned baseline worktree runs pre-rotation code: keep a single key in its `.env`.
