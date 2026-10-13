@@ -182,3 +182,12 @@ def test_otpm_429_fails_fast_and_max_output_is_clamped(make_llm):
     llm.cfg = {**CFG, "models": {**CFG["models"], "fake/m": {"max_output": 50}}}
     llm.complete("r", MSG, max_tokens=4000)
     assert srv.requests[0]["max_tokens"] == 50
+
+
+def test_groq_json_validate_failed_400_is_retried(make_llm):
+    err = {"error": {"message": "Failed to validate JSON.", "type": "invalid_request_error",
+                     "code": "json_validate_failed", "failed_generation": ""}}
+    srv = Server(httpx.Response(400, json=err), chat('{"city": "Pune", "population_m": 7.4}'))
+    llm, _ = make_llm(srv)
+    assert llm.structured("r", MSG, Answer).city == "Pune"
+    assert "failed validation" in srv.requests[1]["messages"][-1]["content"]

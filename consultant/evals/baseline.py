@@ -23,14 +23,16 @@ RESULTS = ROOT / "eval_results"
 MAX_QUESTIONS = 8
 
 BASELINE_SYS = (
-    "You are a management consultant solving a case interview. Each turn, either ask the "
-    "interviewer ONE question (to clarify the problem or request data), or, when you have "
-    "enough, give your final answer: the recommendation first, then the supporting analysis "
-    "and next steps. You have a limited number of questions.")
+    "You are a management consultant solving a case interview. Each turn is one of two "
+    "actions. 'ask': say something to the interviewer, i.e. one question to clarify the "
+    "problem or request data; if the interviewer asked you something, reply briefly here "
+    "and continue. 'final_answer': END the case with your answer to the original problem: "
+    "the recommendation first, then the supporting analysis and next steps. You have a "
+    "limited number of questions.")
 
 
 class Turn(BaseModel):
-    action: Literal["ask", "answer"]
+    action: Literal["ask", "final_answer"]
     content: str
 
 
@@ -42,11 +44,11 @@ def run_case(llm: LLM, case: Case, role: str = "baseline") -> Submission:
         left = MAX_QUESTIONS - i
         convo = "\n".join(f"{t['role'].upper()}: {t['content']}" for t in transcript)
         note = (f"Questions left: {left}." if left else
-                "No questions left: give your final answer now (action=answer).")
+                "No questions left: give your final answer now (action=final_answer).")
         msgs = [{"role": "system", "content": BASELINE_SYS},
                 {"role": "user", "content": f"{clip(convo, 4000)}\n\n{note}"}]
         turn = llm.structured(role, msgs, Turn)
-        if turn.action == "answer" or not left:
+        if turn.action == "final_answer" or not left:
             final = turn.content
             break
         transcript += [{"role": "candidate", "content": turn.content},

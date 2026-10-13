@@ -73,4 +73,4 @@ roles:
     fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
   baseline:                      # plain single-model consultant; same model as the EM for fairness
     model: groq/openai/gpt-oss-120b
-    params: {temperature: 0.3, max_tokens: 1500, reasoning_effort: medium}
+    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: medium}

@@ -124,23 +124,23 @@ retry; live smoke test makes one call to each configured provider; a forced 429 
 handled with backoff.
 
 ### Phase 1 — Knowledge extraction and evaluation foundation
-- [ ] Extract text from the casebook; segment into individual cases and industry reports
-- [ ] LLM-extract each case into a pydantic `Case`: id, title, firm, type, difficulty,
+- [x] Extract text from the casebook; segment into individual cases and industry reports
+- [x] LLM-extract each case into a pydantic `Case`: id, title, firm, type, difficulty,
   numerical flag, industry, problem statement, clarifying Q&A, structure used,
   data reveals (each: trigger question → data given), key insight, recommendation,
   interviewer feedback
-- [ ] Industry reports → tagged chunks (value chain, KPIs, cost/revenue drivers, trends)
-- [ ] Bridgeway → notes for the deliverables/research playbooks (original words only)
-- [ ] Stratified split with fixed seed: ~15 held-out test cases across types/difficulty;
+- [x] Industry reports → tagged chunks (value chain, KPIs, cost/revenue drivers, trends)
+- [x] Bridgeway → notes for the deliverables/research playbooks (original words only)
+- [x] Stratified split with fixed seed: ~15 held-out test cases across types/difficulty;
   rest are train (case library + playbook mining)
-- [ ] **Interviewer simulator:** holds one case; answers clarifying questions; reveals a
+- [x] **Interviewer simulator:** holds one case; answers clarifying questions; reveals a
   data item only when a question is relevant to its trigger; otherwise "not
   available / what would you need it for?"
-- [ ] **Judge** with rubric (each 1–5, with written justification): scoping,
+- [x] **Judge** with rubric (each 1–5, with written justification): scoping,
   structure (MECE), hypothesis quality, key insight found, maths correctness,
   evidence/sourcing, recommendation follows from evidence, communication
   (answer-first, pyramid), efficiency (questions/searches used)
-- [ ] **Baseline runner:** plain single-model consultant prompt, no tools/playbooks,
+- [x] **Baseline runner:** plain single-model consultant prompt, no tools/playbooks,
   through the same simulator and judge
 
 **Gate:** ≥55 cases extracted, 100% schema-valid; a written spot-check of 10 random

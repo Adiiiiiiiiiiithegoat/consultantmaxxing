@@ -127,15 +127,20 @@ class LLM:
         else:
             msgs.insert(0, {"role": "system", "content": hint})
         for attempt in range(retries + 1):
-            c = self.complete(role, msgs, json_mode=True, **params)
             try:
+                c = self.complete(role, msgs, json_mode=True, **params)
                 return schema.model_validate_json(extract_json(c.content))
+            except openai.BadRequestError as e:
+                # Groq's JSON mode rejects invalid/empty output server-side with a 400
+                if "json_validate_failed" not in str(e):
+                    raise
+                reply, err = "(invalid or empty JSON)", "the reply was not a valid JSON object"
             except (ValidationError, ValueError) as e:
-                err = str(e)[:1500]
-                self._trace("schema_retry", role=role, attempt=attempt, error=err)
-                msgs += [{"role": "assistant", "content": c.content or "(empty reply)"},
-                         {"role": "user", "content": f"That reply failed validation:\n{err}\n"
-                          "Return the corrected JSON object only."}]
+                reply, err = c.content or "(empty reply)", str(e)[:1500]
+            self._trace("schema_retry", role=role, attempt=attempt, error=err)
+            msgs += [{"role": "assistant", "content": reply},
+                     {"role": "user", "content": f"That reply failed validation:\n{err}\n"
+                      "Return the corrected JSON object only, keeping it brief."}]
         raise StructuredOutputError(f"{role}: no valid {schema.__name__} after {retries + 1} tries")
 
     # ---- one model call ----------------------------------------------------------------

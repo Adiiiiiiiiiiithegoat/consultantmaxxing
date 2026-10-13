@@ -41,6 +41,23 @@ def _wait(events, now, horizon, max_req, max_tok, tokens, field=1) -> float:
     return 0.0
 
 
+def _bucket_wait(events, now, cap, need, field=None) -> float:
+    """Daily quotas refill continuously (Groq: RPD reset = 86.4s per request used), so model
+    them as a bucket of size `cap` refilling cap/day, replayed from the event log."""
+    if cap is None:
+        return 0.0
+    rate = cap / DAY
+    level, last = float(cap), None
+    for e in events:
+        if last is not None:
+            level = min(cap, level + (e[0] - last) * rate)
+        level -= 1 if field is None else e[field]
+        last = e[0]
+    if last is not None:
+        level = min(cap, level + (now - last) * rate)
+    return 0.0 if level >= need else (need - level) / rate
+
+
 class RateLimiter:
     def __init__(self, rpm=None, tpm=None, rpd=None, tpd=None, otpm=None, *,
                  state_path: Path | None = None, max_wait: float = 180.0, clock=time.time,
@@ -57,7 +74,8 @@ class RateLimiter:
         now = self.clock()
         while self.events and self.events[0][0] <= now - DAY:
             self.events.popleft()
-        day = _wait(self.events, now, DAY, self.rpd, self.tpd, tokens)
+        day = max(_bucket_wait(self.events, now, self.rpd, 1),
+                  _bucket_wait(self.events, now, self.tpd, tokens, field=1))
         if day > self.max_wait:
             raise QuotaExhausted(f"daily quota exhausted; frees up in {day / 60:.0f} min")
         return max(day, _wait(self.events, now, MINUTE, self.rpm, self.tpm, tokens),

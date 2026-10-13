@@ -74,3 +74,14 @@ def test_otpm_spaces_calls_after_a_long_output():
     c.t += 10
     lim.acquire(100, out=200)
     assert c.slept == [50.0]
+
+
+def test_daily_quota_refills_continuously():
+    c = Clock()
+    lim = make(c, tpd=86400)  # refills 1 token per second
+    lim.acquire(86400)
+    c.t += 100
+    lim.acquire(50)            # 100 refilled, 50 used -> 50 left
+    assert c.slept == []
+    lim.acquire(100)           # needs 50 more -> 50 s, under max_wait
+    assert c.slept == [50.0]
