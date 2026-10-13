@@ -230,3 +230,15 @@ def test_find_header_takes_nearest_year_line_above_the_row():
     row = "| Consolidated Net Profit | ₹17,390 Cr | ₹15,702 Cr | ₹14,851 Cr |"
     assert find_header(page, row) == "| Particulars | Mar2025 | Mar2024 | Mar2023 |"
     assert find_header("no table here", "| X | 1 | 2 | 3 |") == ""
+
+
+def test_prose_and_duplicated_columns_are_not_expanded():
+    from consultant.research.extract import expand_table_fact
+    prose = PageFact(claim="c", metric="net_profit", value=26233, unit="crore", entity="I",
+                     period="FY24", quote="In FY2024 net profit rose 8.9 per cent to Rs 26,233 "
+                     "crore from Rs 24,095 crore", header="On a year-on-year basis 2023 and 2024")
+    assert expand_table_fact(prose) == [prose]
+    dup = prose.model_copy(update={
+        "quote": "Net Profit | 22,110 | 22,110 | 24,095 | 24,095 | 26,233 | 26,233",
+        "header": "| Mar 2022 | Mar 2023 | Mar 2024 |"})
+    assert expand_table_fact(dup) == [dup]   # 6 values for 3 years: ambiguous, don't guess

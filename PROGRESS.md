@@ -6,7 +6,7 @@ Updated by Claude Code at the end of every phase. A fresh session resumes from h
 |---|---|---|---|
 | 0 Foundations | done | pass: 15 unit + 2 live (2 skipped: no keys) | see log 2026-10-13 |
 | 1 Knowledge + eval foundation | in progress | all items pass except baseline (running, quota-paced) | see log |
-| 2 Research layer | not started | | |
+| 2 Research layer | in progress | gate eval running | see log |
 | 3 Analysis + engagement state | not started | | |
 | 4 Playbooks + retrieval | not started | | |
 | 5 Agents + engagement loop | not started | | |
@@ -189,3 +189,52 @@ per model, so roles are spread across them:
   Remove that line once the baseline is done.
 - Caveat: the worktree has its own limiter state, so the two processes don't see each
   other's use of gpt-oss-20b / qwen. The server's 429s (with backoff) cover the overlap.
+
+### 2026-10-13: Phase 2 Research layer (in progress, parallel to the Phase 1 baseline)
+
+**Built**
+- `research/web.py`: `SearchProvider` interface with keyless DuckDuckGo (`ddgs`); fetcher
+  with robots.txt, 2s per-host delay, disk cache, 15s timeout, 30MB cap, HTML via
+  trafilatura, PDF via pymupdf. Searches/pages are charged to run and per-question budgets.
+  Search errors (ddgs rate limits) return no results and are traced, never cached.
+- `research/credibility.py`: source type by domain/path: filing/government (5) >
+  research/press (4) > trade (3, the default for unknown domains) > aggregator (2) > blog (1).
+- `research/fact_store.py` (SQLite): CHECK constraints make a fact without `source_url` or
+  `quote` impossible; estimates live in `assumptions` (label must be 'estimate'); only
+  verified facts are deliverable-eligible.
+- `research/extract.py`: the local extractor proposes facts. A fact is kept only if its
+  quote is verbatim on the page (normalised) and contains the value. Multi-year table rows
+  are aligned to header years deterministically (right-aligned, skipping TTM columns); if
+  the model omits the header, the nearest year-bearing line above the row is taken from
+  the page. Chunk selection uses metric synonyms and period variants.
+- `research/triangulate.py`: ≥2 independent domains within 2% = confirmed; disagreements
+  are kept as low/high ranges; otherwise single_source.
+- `research/verify.py`: re-fetches each source; checks the quote is still there and the
+  value is in the quote (non-numeric claims: LLM entailment).
+- `research/estimate.py`: top-down/bottom-up estimates; the LLM proposes factors and a
+  formula, Python evaluates it with a whitelist-only AST evaluator; uncited factors become
+  assumption-register entries.
+- `agents/research_associate.py`: plan (2–3 plain keyword queries) → search → read the most
+  credible results (up to 5 tries / 3 successful reads per query) → extract → gap check →
+  next query; caps per question; a 4K-token reserve for the brief. Facts are flagged
+  `period=MISMATCH` against the question's year. **The brief's value must equal a cited fact
+  for the asked period**; otherwise one corrective retry, then the value is withheld.
+- LLM client: `scoped(budget)` thread-local per-question budgets; `local: true` providers
+  (Ollama) are not charged to budgets (still traced).
+
+**Iteration discipline**: after one diagnostic run on the first gate question (Infosys),
+all iteration used 3 separate dev questions (`fact_questions_dev.yaml`: HCLTech net
+income, India power generation, Titan total income). Fixes made from what they exposed:
+table-column mistakes, period mismatches, the brief ignoring flags, blocked/timeout
+sources, over-quoted queries.
+
+**Known limits / decisions for the user**
+- Several government sites (pib.gov.in, powermin.gov.in) return 403 to any non-browser
+  user-agent. I did **not** spoof a browser UA (that would be evading bot detection); those
+  sources are treated as unavailable. A keyed search/extract API (Tavily, Brave) or an
+  official data API would be the clean fix.
+- Third-party aggregator tables can be wrong: smart-investing.in labels HCLTech's FY24 profit
+  as "Mar2025". Faithful extraction of a wrong source shows why key numbers need ≥2
+  independent sources; the brief should rate such answers low.
+- The local extractor (qwen3:4b-instruct) is the quality bottleneck. A 7B local model would
+  likely help, but the machine had only 0.7GB free RAM, so I didn't pull one.

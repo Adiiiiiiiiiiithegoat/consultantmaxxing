@@ -150,6 +150,13 @@ def header_years(header: str) -> list[str]:
     return out
 
 
+def is_table_like(line: str, min_gaps: int = 2) -> bool:
+    """Column layout: pipe-separated cells or wide (2+ space) gaps, and not a long sentence.
+    Rows need 2 gaps (label + 2 values); a 2-column header needs only 1."""
+    return bool(line) and len(line) <= 400 and (
+        line.count("|") >= 2 or len(re.findall(r"\S {2,}\S|\t", line)) >= min_gaps)
+
+
 def find_header(text: str, quote: str) -> str:
     """Nearest line above the quoted row that names >= 2 years, copied from the page."""
     words = re.findall(r"\S+", quote)[:8]
@@ -159,7 +166,7 @@ def find_header(text: str, quote: str) -> str:
     if not m:
         return ""
     for line in reversed(text[max(0, m.start() - 4000):m.start()].splitlines()):
-        if len(header_years(line)) >= 2:
+        if len(header_years(line)) >= 2 and is_table_like(line.strip(), 1):
             return line.strip()
     return ""
 
@@ -168,9 +175,13 @@ def expand_table_fact(f: PageFact) -> list[PageFact]:
     """A multi-year table row + its verified header -> one fact per year, aligned by position
     from the right (leading extra cells are TTM/latest columns). Small models often pick the
     wrong column; this removes that choice. No expansion if the counts don't line up."""
-    years = header_years(f.header) if f.header else []
+    if not (is_table_like(f.quote) and is_table_like(f.header, 1)) or \
+            norm(f.header) == norm(f.quote):
+        return [f]
+    years = header_years(f.header)
     values = numbers_in(re.sub(r"\((?:[ivxl+\s]+)\)", " ", f.quote, flags=re.I))  # drop (I+II)
-    if len(years) < 2 or len(values) < len(years) or len(set(years)) != len(years):
+    if len(years) < 2 or len(set(years)) != len(years) or \
+            not 0 <= len(values) - len(years) <= 1:  # at most one extra (TTM) cell
         return [f]
     pairs = zip(years, values[-len(years):], strict=True)
     return [f.model_copy(update={"value": v, "period": y,
@@ -194,7 +205,7 @@ def extract_facts(llm: LLM, page: Page, question: str,
                 continue
             if f.header and not quote_in_text(f.header, page.text):
                 f.header = ""  # unverifiable context is dropped, not trusted
-            if not f.header and len(numbers_in(f.quote)) >= 3:  # looks like a table row
+            if not f.header and is_table_like(f.quote):
                 f.header = find_header(page.text, f.quote)
             for g in expand_table_fact(f):
                 if not any(norm(g.quote) == norm(k.quote) and g.value == k.value
