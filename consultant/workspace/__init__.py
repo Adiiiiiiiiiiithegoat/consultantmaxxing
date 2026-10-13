@@ -8,7 +8,6 @@ engagements/<id>/
   deliverables/    memo, storyline, model.xlsx, appendix
 """
 
-import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -18,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from consultant.analysis import sandbox
 from consultant.config import ROOT
+from consultant.llm.cache import atomic_write
 from consultant.research.fact_store import FactStore
 
 ENGAGEMENTS = ROOT / "engagements"
@@ -112,10 +112,8 @@ class Workspace:
         return cls.create(engagement_id, root, **fields)
 
     def save(self) -> None:
-        path = self.dir / "workspace.json"
-        tmp = path.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(self.state.model_dump_json(indent=1), encoding="utf-8")
-        os.replace(tmp, path)  # atomic: a kill never leaves a half-written workspace
+        # atomic: a kill never leaves a half-written workspace
+        atomic_write(self.dir / "workspace.json", self.state.model_dump_json(indent=1))
 
     @property
     def facts(self) -> FactStore:

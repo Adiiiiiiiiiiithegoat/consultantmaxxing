@@ -24,7 +24,9 @@ def load_yaml(name: str) -> dict:
 
 
 def models_config() -> dict:
-    return load_yaml("models.yaml")
+    """config/models.yaml, or the file named by CONSULTANT_MODELS_FILE (e.g. models.small.yaml
+    for smoke runs, or a paid-model file later)."""
+    return load_yaml(os.environ.get("CONSULTANT_MODELS_FILE") or "models.yaml")
 
 
 def profile(name: str = "dev") -> dict:

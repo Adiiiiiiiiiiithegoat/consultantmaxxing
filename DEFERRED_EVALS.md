@@ -36,3 +36,17 @@ use the same model as the system's engagement manager, and each result records
 Notes: an interrupted attempt on Groq (gpt-oss-20b + local qwen3:4b-instruct extractor)
 got 2/5 before it was stopped; the table/prose fixes made after it are untested live.
 Iterate on the dev set, not the 20 gate questions.
+
+## 3. Phase 4: playbooks + retrieval
+Ran offline and passed (leakage, retrieval 95.5% top-5, originality); nothing deferred.
+Re-run after changing the index: `uv run pytest tests/test_knowledge.py`.
+
+## 4. Phase 5: agents + engagement loop
+| # | Check | Command | Pass criterion |
+|---|---|---|---|
+| 5.1 | 3 train cases end-to-end in case mode | `uv run python -m consultant.evals.run_system cases --split train --n 3 --name system-train` | all 3 complete within budget (`within_budget` = 3), all artefacts in each workspace |
+| 5.2 | Partner catches seeded flaws | `uv run python -m consultant.evals.partner_eval` | ≥4/5 caught (strict: named kind, major/critical); clean draft approved |
+| 5.3 | One real-mode run on a simple public-company question | `uv run python -m consultant.evals.run_system real "Why did Asian Paints' margins change in FY24?"` | completes; deliverables written; facts verified |
+| 5.4 | Token actuals | `uv run python -m consultant.evals.token_estimate --traces eval-system-train` | replace the PROGRESS.md estimate |
+
+Use a 5-case **train** subset (`--n 5`) for iteration; never iterate on the test split.

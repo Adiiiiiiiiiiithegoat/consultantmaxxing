@@ -242,3 +242,16 @@ def test_prose_and_duplicated_columns_are_not_expanded():
         "quote": "Net Profit | 22,110 | 22,110 | 24,095 | 24,095 | 26,233 | 26,233",
         "header": "| Mar 2022 | Mar 2023 | Mar 2024 |"})
     assert expand_table_fact(dup) == [dup]   # 6 values for 3 years: ambiguous, don't guess
+
+
+def test_fact_store_concurrent_add_and_read():
+    from concurrent.futures import ThreadPoolExecutor
+    store = FactStore()
+
+    def work(i):
+        store.add(Fact(engagement_id="e", claim=f"c{i}", source_url="https://a.com",
+                       quote="q", source_type="press", credibility=4))
+        return len(store.facts("e"))
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(work, range(100)))
+    assert len(store.facts("e")) == 100

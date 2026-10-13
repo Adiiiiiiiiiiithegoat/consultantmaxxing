@@ -1,0 +1,68 @@
+# SMALL-MODEL routing for smoke runs (CONSULTANT_MODELS_FILE=models.small.yaml).
+# Every role on gpt-oss-20b (Groq) or local Ollama; never gpt-oss-120b.
+# Model routing. Code never names a model; it asks for a role.
+# Swap a role to Claude/OpenAI by changing its `model` to e.g. anthropic/claude-sonnet-5-5.
+#
+# Checked 2026-10-13 against GET /openai/v1/models + x-ratelimit headers on this account.
+# Groq free tier (per model, per org): gpt-oss-120b / gpt-oss-20b / qwen3.8-27b each
+# 30 RPM, 1K RPD, 8K TPM, 200K TPD. Each model has its own quota, so roles are spread.
+# 8K TPM also caps a single request: prompt + max_tokens must fit under it.
+# qwen3.8-27b also has an undocumented 1K output-tokens/min (OTPM) cap. Groq checks it at
+# admission against an estimate taken from recent reply lengths, so once a reply runs past 1K,
+# every later request is refused until max_tokens <= 1000. Hence max_output: 1000 (the client
+# clamps to it). Keep qwen roles to short outputs.
+# qwen3.8-27b on Groq emits no reasoning whatever reasoning_effort says, so it's set to none.
+
+providers:
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+  ollama:
+    base_url: ${OLLAMA_BASE_URL:-http://localhost:11434}/v1
+    api_key: ollama              # Ollama ignores it; the client needs a value
+    local: true                  # free: not charged to run budgets (still traced)
+  anthropic:                     # OpenAI-compatible endpoint; untested until a key exists
+    base_url: https://api.anthropic.com/v1
+    api_key_env: ANTHROPIC_API_KEY
+  openai:                        # untested until a key exists
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+
+# Per-model limits. Omitted keys = unlimited (local models).
+models:
+  groq/openai/gpt-oss-120b: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, context: 131072}
+  groq/openai/gpt-oss-20b:  {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, context: 131072}
+  groq/qwen/qwen3.8-27b:    {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, otpm: 1000, max_output: 1000,
+                             context: 131072}
+  ollama/qwen3:4b-instruct: {context: 32768}   # non-thinking build; plain qwen3:4b always thinks
+
+roles:
+  engagement_manager:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: low}
+  storyliner:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.4, max_tokens: 3000, reasoning_effort: low}
+  research_associate:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.2, max_tokens: 1500, reasoning_effort: low}
+    fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
+  analyst:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.1, max_tokens: 2000, reasoning_effort: low}
+  partner:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.3, max_tokens: 1500, reasoning_effort: low}
+  extractor:
+    model: ollama/qwen3:4b-instruct
+    params: {temperature: 0.0, max_tokens: 2000}
+    fallback: {model: groq/openai/gpt-oss-20b, params: {reasoning_effort: low}}
+  judge:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.0, max_tokens: 1500, reasoning_effort: low}
+  interviewer:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.0, max_tokens: 1200, reasoning_effort: medium}
+  baseline:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: low}

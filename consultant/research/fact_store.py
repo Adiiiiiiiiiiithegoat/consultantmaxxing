@@ -113,8 +113,13 @@ class FactStore:
         d["verified"] = None if d["verified"] is None else bool(d["verified"])
         return Fact(**d)
 
+    def _rows(self, sql: str, args=()) -> list[sqlite3.Row]:
+        with self.lock:  # one connection shared by research threads: serialise all access
+            return self.db.execute(sql, args).fetchall()
+
     def get(self, fact_id: int) -> Fact | None:
-        r = self.db.execute("SELECT * FROM facts WHERE id = ?", (fact_id,)).fetchone()
+        rows = self._rows("SELECT * FROM facts WHERE id = ?", (fact_id,))
+        r = rows[0] if rows else None
         return self._fact(r) if r else None
 
     def facts(self, engagement_id: str | None = None, verified_only: bool = False) -> list[Fact]:
@@ -123,7 +128,7 @@ class FactStore:
             sql, args = sql + " AND engagement_id = ?", [engagement_id]
         if verified_only:
             sql += " AND verified = 1"
-        return [self._fact(r) for r in self.db.execute(sql + " ORDER BY id", args)]
+        return [self._fact(r) for r in self._rows(sql + " ORDER BY id", args)]
 
     def eligible(self, engagement_id: str) -> list[Fact]:
         """Facts a deliverable may cite: sourced (schema-enforced) and verified."""
@@ -142,8 +147,8 @@ class FactStore:
                                 (json.dumps([*f.hypothesis_ids, hypothesis_id]), fact_id))
 
     def assumptions(self, engagement_id: str) -> list[Assumption]:
-        rows = self.db.execute("SELECT * FROM assumptions WHERE engagement_id = ? ORDER BY id",
-                               (engagement_id,))
+        rows = self._rows("SELECT * FROM assumptions WHERE engagement_id = ? ORDER BY id",
+                          (engagement_id,))
         out = []
         for r in rows:
             d = dict(r)

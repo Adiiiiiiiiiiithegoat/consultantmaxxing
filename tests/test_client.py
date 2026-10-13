@@ -223,3 +223,14 @@ def test_local_provider_not_charged_to_budget(make_llm):
     llm.complete("loc", MSG)                       # free local model: allowed
     with pytest.raises(BudgetExceeded):
         llm.complete("r", MSG)                     # remote: capped
+
+
+def test_disk_cache_concurrent_writes_to_same_key(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from consultant.llm.cache import DiskCache
+    c = DiskCache(tmp_path)
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(lambda i: c.set("k" * 64, {"v": 1}), range(64)))
+    assert c.get("k" * 64) == {"v": 1}
+    assert not list(tmp_path.rglob("*.tmp"))

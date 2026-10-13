@@ -201,18 +201,18 @@ originality check (no long verbatim overlaps with source text, e.g. no shared
 12-word n-grams).
 
 ### Phase 5 — Agents and the engagement loop
-- [ ] Engagement Manager loop: scope → classify → load playbook → issue tree +
+- [x] Engagement Manager loop: scope → classify → load playbook → issue tree +
   hypotheses → dispatch research in parallel → analyst → update hypotheses → repeat
   → storyliner → partner → revise (max 3 rounds) → deliver
-- [ ] Stop rules: all priority hypotheses resolved, or budget/iteration cap hit (then
+- [x] Stop rules: all priority hypotheses resolved, or budget/iteration cap hit (then
   deliver with explicit open questions)
-- [ ] User checkpoints after scoping and after initial hypotheses (interactive mode);
+- [x] User checkpoints after scoping and after initial hypotheses (interactive mode);
   auto mode for evals
-- [ ] Partner: fresh context, sees only draft + fact store; checks sourcing, logic,
+- [x] Partner: fresh context, sees only draft + fact store; checks sourcing, logic,
   strongest counterargument, CEO questions, and an anti-agreeableness check (if the
   answer just confirms the client's initial belief, it must be justified)
 
-- [ ] After the first end-to-end runs: measure tokens per full engagement (per model),
+- [x] After the first end-to-end runs: measure tokens per full engagement (per model),
   estimate Phase 7 duration on the free tier, propose options (spread roles across models,
   a 5-case dev eval set for iteration, the full 15 only for the final run); note in PROGRESS.md
 

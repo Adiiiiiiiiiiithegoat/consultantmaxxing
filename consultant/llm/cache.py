@@ -3,6 +3,8 @@
 import hashlib
 import json
 import os
+import threading
+import time
 from pathlib import Path
 
 
@@ -25,6 +27,19 @@ class DiskCache:
     def set(self, key: str, value: dict) -> None:
         p = self._path(key)
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(f".{os.getpid()}.tmp")
-        tmp.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, p)
+        atomic_write(p, json.dumps(value, ensure_ascii=False))
+
+
+def atomic_write(path: Path, text: str, tries: int = 20) -> None:
+    """Write via a per-thread temp file + rename. Windows refuses a rename while another
+    thread is replacing the same target, so retry briefly; same content either way."""
+    tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    for i in range(tries):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.01 * (i + 1))

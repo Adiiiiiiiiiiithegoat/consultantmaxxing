@@ -6,9 +6,15 @@ profiles:
     max_searches: 20
     max_pages: 30
     eval_cases: 3
+    max_iterations: 2      # evidence/assess loops
+    max_questions: 10      # case mode: questions to the client
+    max_research: 3        # questions researched per iteration
   full:
     max_tokens: 400000
     max_calls: 800
     max_searches: 120
     max_pages: 200
     eval_cases: 15
+    max_iterations: 4
+    max_questions: 25
+    max_research: 6

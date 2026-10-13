@@ -12,7 +12,7 @@ Updated by Claude Code at the end of every phase. A fresh session resumes from h
 | 2 Research layer | built; live gate deferred | offline green (39 tests) | DEFERRED_EVALS.md §2 |
 | 3 Analysis + engagement state | built | offline gate passed (15 tests) | no live component |
 | 4 Playbooks + retrieval | built | offline gate passed: leakage, retrieval 95.5% top-5, originality | BM25, no embeddings |
-| 5 Agents + engagement loop | not started | | |
+| 5 Agents + engagement loop | built; live gate deferred | offline green (74 tests); 1 smoke call OK | DEFERRED_EVALS.md §5 |
 | 6 Deliverables | not started | | |
 | 7 Full evaluation | not started | | |
 | 8 Interface + hardening | not started | | |
@@ -307,3 +307,75 @@ quality. The keyed-search and bigger-extractor options are in the notes above.
   even my own Bridgeway notes (two playbook lines that echoed my notes were reworded).
 - Still to wire in Phase 5: auto-extend primers after researching an industry the index
   doesn't cover.
+
+### 2026-10-13: Phase 5 Agents + engagement loop (built; live gate deferred)
+**Built**
+- `agents/engagement_manager.py` (`Engagement`): scope (+ classify) → plan (playbook +
+  3 similar train cases + MECE issue tree + ranked falsifiable hypotheses, competing
+  explanations required) → iterations of [gather evidence → assess hypotheses (evidence
+  ids validated; unknown ids dropped) → run requested analyses] → (real mode) citation
+  verification + primer auto-extension → storyline → partner review (≤3 rounds) → deliver.
+  Every stage is a `ws.step` (resumable). Budget: 70% of profile tokens for investigation,
+  30% reserved for synthesis, so a capped run still delivers with an explicit open
+  question. Checkpoints after scoping and hypotheses via a callback (interactive mode;
+  auto mode passes none).
+  - Case mode: questions go to the interviewer simulator; answers are stored as facts
+    sourced `case://<id>/interviewer`, and numbers in them go through the same
+    verbatim-quote extractor as web pages. Interview log persisted after each question.
+  - Real mode: questions go to Research Associates in parallel (2 threads; their spend is
+    charged to the engagement budget).
+- `agents/analyst.py`: writes sandbox code; fact values injected as `FACTS[id]`,
+  assumptions as `ASSUMPTIONS['S<id>']` (no retyped numbers); retries with the error.
+- `agents/storyliner.py`: pyramid draft (answer, 1–5 action-titled arguments with
+  F#/A#/S# refs, risks incl. unmitigated ones, next steps, open questions, confidence,
+  slides).
+- `agents/partner.py`: fresh-context red team (question, client prior, draft, evidence
+  only). Checks unsupported claims, maths, non-sequiturs, missing branches,
+  client-pleasing; counterargument + 3 CEO questions. Deterministic: any major/critical
+  issue, or unjustified agreement with the client's prior, forces 'revise'.
+- `deliverables/` (placeholder until Phase 6): memo.md + storyline.json.
+- Eval tooling (not run live): `evals/run_system.py` (case mode on a split + judge; real
+  mode), `evals/partner_eval.py` + `partner_seeded.yaml` (5 seeded flaws + clean draft,
+  strict scoring), `evals/token_estimate.py`, `evals/common.code_version`.
+- `config/models.small.yaml` + `CONSULTANT_MODELS_FILE`: every role on gpt-oss-20b/local,
+  for smoke runs (and the pattern for a paid-model file).
+- Concurrency fixes found by the real-mode test: per-thread temp files + Windows rename
+  retry in `atomic_write` (cache and workspace); fact-store reads serialised.
+
+**Offline tests (74 total green):** full case-mode engagement with a scripted LLM + real
+simulator, sandbox, fact store and workspace (steps, sourced client facts, verbatim
+numbers, hypothesis updates, analysis, partner revise→approve, memo); resume after
+completion makes zero LLM calls; budget stop still delivers; real-mode engagement with fake
+web (research, verification, primer extension); partner client-pleasing rule; strict
+partner-eval scoring; run_case wiring with judge; token estimator.
+**Live smoke (1 call, gpt-oss-20b):** the `Scope` schema validated on a real model
+(classified profitability, captured the client's prior). Untested live: everything else.
+Risks: open models as orchestrators; long prompts near the 8K-per-request ceiling on
+Groq; qwen's 1K output cap for analyst/partner/judge.
+
+**Token estimate and Phase 7 duration (requested by the user; structural estimate,
+`python -m consultant.evals.token_estimate`)**
+
+| | dev profile | full profile |
+|---|---|---|
+| one engagement, case mode | ~56K tokens (120b 20K, qwen 17K, 20b 20K) | ~119K |
+| one engagement, real mode | ~57K | ~154K |
+| Phase 7, 5 cases, current 3-model plan | ≥1.1 days | ≥2.5 days |
+| Phase 7, 15 cases, current 3-model plan | ≥2.7 days | ≥4.9 days |
+| Phase 7, 15 cases, all on gpt-oss-20b (small plan) | ≥6.5 days | not computed |
+
+These are lower bounds from daily token quotas alone (200K/day per Groq model); pacing,
+retries and the 8K TPM ceiling add roughly 1.5–2× wall-clock. Each Phase 7 "fix the weakest
+layer and re-run" iteration repeats the cost. Replace with actuals after the first live
+runs: `python -m consultant.evals.token_estimate --traces <run_id>`.
+
+Options:
+1. **Paid model for the orchestrating roles** (EM, storyliner, partner, judge): removes
+   the bottleneck; the free tier stays for research and the interviewer.
+2. **Spread roles across quotas**: already 3 Groq models; move the interviewer to local
+   Ollama (saves ~20% of gpt-oss-20b use) and keep the judge on a different family.
+3. **5-case dev eval set for iteration, full 15 only for the final run.** Important: the
+   dev set must come from the **train split**, not the 15 test cases, otherwise iterating
+   on it is tuning on the test split (rule 6).
+   `run_system cases --split train --n 5`; the final `--split test` run happens once.
+4. Dev profile for iteration, full profile only for the final run.
