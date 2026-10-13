@@ -1,6 +1,8 @@
 # OVERNIGHT routing (CONSULTANT_MODELS_FILE=models.overnight.yaml): models.yaml with every
 # gpt-oss-120b role moved to gpt-oss-20b (120b stays reserved/blocked). Partner and judge
 # stay on qwen3.8-27b (different family from the writer), which also spreads the quota.
+# Writers on 20b use reasoning_effort low (as models.small.yaml): medium spent 1.6-2.9K
+# completion tokens per draft and blew the dev synthesis budget on all 3 train cases.
 # Model routing. Code never names a model; it asks for a role.
 # Swap a role to Claude/OpenAI by changing its `model` to e.g. anthropic/claude-sonnet-5-5.
 #
@@ -44,10 +46,10 @@ models:
 roles:
   engagement_manager:
     model: groq/openai/gpt-oss-20b
-    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: medium}
+    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: low}
   storyliner:
     model: groq/openai/gpt-oss-20b
-    params: {temperature: 0.4, max_tokens: 3000, reasoning_effort: medium}
+    params: {temperature: 0.4, max_tokens: 3000, reasoning_effort: low}
   research_associate:
     model: groq/openai/gpt-oss-20b
     params: {temperature: 0.2, max_tokens: 1500, reasoning_effort: low}
@@ -79,4 +81,4 @@ roles:
     fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
   baseline:                      # plain single-model consultant; same model as the EM for fairness
     model: groq/openai/gpt-oss-20b
-    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: medium}
+    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: low}
