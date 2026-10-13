@@ -269,3 +269,30 @@ def test_fact_store_concurrent_add_and_read():
     with ThreadPoolExecutor(8) as pool:
         list(pool.map(work, range(100)))
     assert len(store.facts("e")) == 100
+
+
+def test_extractor_sees_collapsed_empty_cells_and_survives_a_bad_chunk():
+    # fact-finding tatamotors: qwen3:4b looped copying "|  |  |" runs until max_tokens, and
+    # the StructuredOutputError killed the eval
+    from consultant.llm import StructuredOutputError
+    from consultant.research.extract import extract_facts
+    from consultant.research.web import Page
+
+    class FakeLLM:
+        def __init__(self, fail):
+            self.fail, self.seen = fail, []
+
+        def structured(self, role, msgs, schema):
+            self.seen.append(msgs[-1]["content"])
+            if self.fail:
+                raise StructuredOutputError("extractor: no valid PageFacts after 3 tries")
+            return schema(facts=[PageFact(
+                claim="Revenue FY24 was 4,37,928 crore", metric="revenue", value=437928,
+                unit="crore", entity="Tata Motors", period="FY24",
+                quote="| Revenue | 4,37,928 | 3,45,967 |")])
+    text = "Results table " * 10 + "\n| Revenue |  |  |  | 4,37,928 |  |  | 3,45,967 |\n"
+    page = Page(url="https://x.com/a", title="t", text=text)
+    llm = FakeLLM(fail=False)
+    facts, rejected = extract_facts(llm, page, "Tata Motors revenue FY24")
+    assert "|  |" not in llm.seen[0] and facts and facts[0].value == 437928 and not rejected
+    assert extract_facts(FakeLLM(fail=True), page, "q") == ([], 0)
