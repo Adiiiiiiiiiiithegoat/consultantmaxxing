@@ -1,0 +1,157 @@
+"""LLM client against a fake OpenAI-compatible server (httpx.MockTransport): no network."""
+
+import json
+
+import httpx
+import pytest
+from pydantic import BaseModel
+
+from consultant.llm import LLM, StructuredOutputError
+from consultant.llm.context import estimate_tokens, fit
+from consultant.tracing import Budget, BudgetExceeded, Tracer
+from tests.test_limiter import Clock
+
+CFG = {
+    "providers": {"fake": {"base_url": "http://fake/v1", "api_key": "x"},
+                  "down": {"base_url": "http://down/v1", "api_key": "x"}},
+    "models": {"fake/m": {"rpm": 100, "tpm": 8000, "rpd": 1000}, "fake/backup": {},
+               "down/m": {}},
+    "roles": {
+        "r": {"model": "fake/m", "params": {"max_tokens": 100}},
+        "fb": {"model": "down/m", "params": {"max_tokens": 100},
+               "fallback": {"model": "fake/backup", "params": {"temperature": 0}}},
+        "fb2": {"model": "fake/m", "fallback": {"model": "fake/backup"}},
+    },
+}
+
+
+def chat(content, prompt=10, completion=5):
+    return httpx.Response(200, json={
+        "id": "x", "object": "chat.completion", "created": 0, "model": "m",
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": content}}],
+        "usage": {"prompt_tokens": prompt, "completion_tokens": completion,
+                  "total_tokens": prompt + completion}})
+
+
+class Server:
+    """Replies from a queue; records request bodies."""
+
+    def __init__(self, *replies):
+        self.replies, self.requests = list(replies), []
+
+    def __call__(self, request: httpx.Request):
+        if request.url.host == "down":
+            raise httpx.ConnectError("refused", request=request)
+        self.requests.append(json.loads(request.content))
+        return self.replies.pop(0)
+
+
+@pytest.fixture
+def make_llm(tmp_path):
+    def _make(server, **kw):
+        clock = Clock()
+        llm = LLM(CFG, cache_dir=tmp_path / "cache", sleep=clock.sleep, clock=clock,
+                  http_client=httpx.Client(transport=httpx.MockTransport(server)), **kw)
+        return llm, clock
+    return _make
+
+
+MSG = [{"role": "user", "content": "hi"}]
+
+
+def test_cache_hit_and_miss(make_llm):
+    srv = Server(chat("one"), chat("two"), chat("three"))
+    llm, _ = make_llm(srv)
+    a = llm.complete("r", MSG)
+    b = llm.complete("r", MSG)
+    assert (a.content, a.cached, b.content, b.cached) == ("one", False, "one", True)
+    assert len(srv.requests) == 1
+    c = llm.complete("r", [{"role": "user", "content": "different"}])
+    assert c.content == "two" and len(srv.requests) == 2
+    d = llm.complete("r", MSG, temperature=0.9)  # params are part of the key
+    assert (d.content, d.cached) == ("three", False)
+
+
+class Answer(BaseModel):
+    city: str
+    population_m: float
+
+
+def test_schema_retry_feeds_back_validation_error(make_llm):
+    fenced = '```json\n{"city": "Pune", "population_m": 7.4}```'
+    srv = Server(chat("sure! here you go"), chat(fenced))
+    llm, _ = make_llm(srv)
+    out = llm.structured("r", MSG, Answer)
+    assert out == Answer(city="Pune", population_m=7.4)
+    assert srv.requests[0]["response_format"] == {"type": "json_object"}
+    assert "failed validation" in srv.requests[1]["messages"][-1]["content"]
+
+
+def test_schema_retry_gives_up(make_llm):
+    srv = Server(*[chat('{"city": "Pune"}') for _ in range(3)])
+    llm, _ = make_llm(srv)
+    with pytest.raises(StructuredOutputError):
+        llm.structured("r", MSG, Answer, retries=2)
+    assert len(srv.requests) == 3
+
+
+def test_forced_429_backs_off_using_retry_after(make_llm, tmp_path):
+    srv = Server(httpx.Response(429, headers={"retry-after": "7"}, json={"error": {}}),
+                 httpx.Response(429, json={"error": {}}),
+                 chat("ok"))
+    tracer = Tracer(root=tmp_path / "traces")
+    llm, clock = make_llm(srv, tracer=tracer)
+    assert llm.complete("r", MSG).content == "ok"
+    assert clock.slept == [7.0, 2.0]  # server's retry-after, then exponential backoff
+    assert len(tracer.events("retry")) == 2
+
+
+def test_429_with_long_retry_after_falls_back(make_llm):
+    srv = Server(httpx.Response(429, headers={"retry-after": "3600"}, json={"error": {}}),
+                 chat("from backup"))
+    llm, clock = make_llm(srv)
+    out = llm.complete("fb2", MSG)  # daily quota gone: don't sleep an hour, use fallback
+    assert (out.model, out.content, clock.slept) == ("fake/backup", "from backup", [])
+
+
+def test_unreachable_provider_falls_back(make_llm):
+    srv = Server(chat("from backup"))
+    llm, _ = make_llm(srv)
+    out = llm.complete("fb", MSG)
+    assert out.model == "fake/backup" and out.content == "from backup"
+    assert srv.requests[0]["temperature"] == 0
+
+
+def test_budget_halts_run(make_llm):
+    srv = Server(chat("a"), chat("b"))
+    llm, _ = make_llm(srv, budget=Budget({"calls": 1}))
+    llm.complete("r", MSG)
+    llm.complete("r", MSG)  # cached: free
+    with pytest.raises(BudgetExceeded):
+        llm.complete("r", [{"role": "user", "content": "new"}])
+
+
+def test_tracer_ledger(make_llm, tmp_path):
+    tracer = Tracer(root=tmp_path / "traces")
+    llm, _ = make_llm(Server(chat("a", 100, 20)), tracer=tracer)
+    llm.complete("r", MSG)
+    llm.complete("r", MSG)
+    u = tracer.usage()["fake/m"]
+    assert (u["calls"], u["cached"], u["prompt_tokens"], u["completion_tokens"]) == (2, 1, 100, 20)
+
+
+def test_oversized_context_is_trimmed_to_fit_tpm(make_llm):
+    srv = Server(chat("ok"))
+    llm, _ = make_llm(srv)
+    big = [{"role": "system", "content": "be brief"}] + [
+        {"role": "user", "content": "x" * 6000} for _ in range(10)]
+    llm.complete("r", big)
+    sent = srv.requests[0]["messages"]
+    assert estimate_tokens(sent) + 100 <= 8000
+    assert sent[0]["content"] == "be brief" and "omitted" in sent[1]["content"]
+
+
+def test_fit_clips_single_huge_message():
+    out = fit([{"role": "user", "content": "y" * 100_000}], 1000)
+    assert estimate_tokens(out) <= 1000 and "omitted" in out[0]["content"]

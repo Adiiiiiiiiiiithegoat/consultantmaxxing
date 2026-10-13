@@ -1,0 +1,14 @@
+# Per-run budgets. A run halts cleanly (checkpoint + stop) when any cap is hit.
+profiles:
+  dev:
+    max_tokens: 60000
+    max_calls: 120
+    max_searches: 20
+    max_pages: 30
+    eval_cases: 3
+  full:
+    max_tokens: 400000
+    max_calls: 800
+    max_searches: 120
+    max_pages: 200
+    eval_cases: 15

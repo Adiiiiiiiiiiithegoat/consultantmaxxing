@@ -1,0 +1,41 @@
+# ---- Copyrighted source material: NEVER commit ----
+# The IIMB casebook and Bridgeway guide are "all rights reserved".
+# They and anything derived from them (extracted cases, chunks, indexes,
+# eval cases) stay on this machine only. This repo is public.
+data/private/
+data/derived/
+data/index/
+*.pdf
+
+# ---- Runtime outputs ----
+engagements/
+runs/
+traces/
+eval_results/
+.llm_cache/
+*.sqlite
+*.sqlite3
+*.db
+
+# ---- Secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
