@@ -186,13 +186,13 @@ out runaway code; kill-and-resume test: a run interrupted mid-way resumes from t
 workspace without redoing completed work.
 
 ### Phase 4 — Playbooks and retrieval
-- [ ] `skills/` playbooks, one per case type: what to clarify first, structures and when
+- [x] `skills/` playbooks, one per case type: what to clarify first, structures and when
   they don't fit, common root causes ranked by frequency in the train cases, traps
   (mined from interviewer feedback), definition of done
-- [ ] Cross-cutting skills: hypothesis-driven problem solving, research method,
+- [x] Cross-cutting skills: hypothesis-driven problem solving, research method,
   deliverables (answer-first, pyramid principle, one message per slide,
   storyboarding), strategy concepts (moats, positioning, implementation)
-- [ ] Retrieval: case library indexed by *problem pattern* (train split only) + industry
+- [x] Retrieval: case library indexed by *problem pattern* (train split only) + industry
   primers; primers auto-extend when the agent researches a new industry
 
 **Gate:** leakage test passes (no test-case content in any index); retrieval eval: for

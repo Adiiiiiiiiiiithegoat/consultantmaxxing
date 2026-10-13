@@ -11,7 +11,7 @@ Updated by Claude Code at the end of every phase. A fresh session resumes from h
 | 1 Knowledge + eval foundation | built; baseline eval deferred | offline green; live: extraction, spot-check, simulator, judge passed; baseline 0/15 (deferred) | DEFERRED_EVALS.md §1 |
 | 2 Research layer | built; live gate deferred | offline green (39 tests) | DEFERRED_EVALS.md §2 |
 | 3 Analysis + engagement state | built | offline gate passed (15 tests) | no live component |
-| 4 Playbooks + retrieval | not started | | |
+| 4 Playbooks + retrieval | built | offline gate passed: leakage, retrieval 95.5% top-5, originality | BM25, no embeddings |
 | 5 Agents + engagement loop | not started | | |
 | 6 Deliverables | not started | | |
 | 7 Full evaluation | not started | | |
@@ -285,3 +285,25 @@ quality. The keyed-search and bigger-extractor options are in the notes above.
   (urllib + raw socket), times out a runaway loop, enforces the memory cap and leaves no
   orphan process; kill-and-resume: a subprocess hard-kills itself (`os._exit`) after
   step 2, the resume runs only steps 3–4, and step outputs survive.
+
+### 2026-10-13: Phase 4 Playbooks + retrieval (built; gate ran offline and passed)
+- `skills/`: 7 case-type playbooks (clarify first, structure and when it doesn't fit,
+  common root causes ranked by frequency in the **train split only** (43 cases, test
+  split asserted absent), analyses, traps mined from interviewer feedback, definition of
+  done) + 4 cross-cutting skills (hypothesis-driven, research method, deliverables,
+  strategy concepts). Original wording. `knowledge/playbooks.py` loads them.
+- `knowledge/retrieval.py`: **BM25 in pure Python** over (a) train cases indexed by problem
+  pattern (type, industry, problem, crux) and (b) industry primers (casebook primer chunks +
+  `primers_extra.jsonl` added from research via `add_primer`). Index in `data/index/`
+  (gitignored). The build refuses if a test-split case appears. Deviation from PLAN: no
+  embeddings or LanceDB. The corpus is ~160 docs and the machine is RAM-constrained; BM25
+  met the gate. Add Ollama `nomic-embed-text` + LanceDB later if quality or scale needs it.
+- **Gate (offline, deterministic):** leakage test passes (no test id; no test problem or
+  insight text in the index); retrieval eval: 22 hand-written queries (18 case-pattern + 4
+  primer; train only; kept in `data/derived/evals/` because they paraphrase casebook
+  problems) → **21/22 = 95.5% in the top 5** (≥80% required). The single miss
+  ("television" vs "TV") was left as-is: no tuning to the eval. Originality: no shared
+  12-word run between any playbook and the casebook/Bridgeway text, the extracted cases, or
+  even my own Bridgeway notes (two playbook lines that echoed my notes were reworded).
+- Still to wire in Phase 5: auto-extend primers after researching an industry the index
+  doesn't cover.
