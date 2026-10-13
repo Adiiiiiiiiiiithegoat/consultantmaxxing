@@ -13,14 +13,17 @@ from tests.test_limiter import Clock
 
 CFG = {
     "providers": {"fake": {"base_url": "http://fake/v1", "api_key": "x"},
+                  "local": {"base_url": "http://fake/v1", "api_key": "x", "local": True},
                   "down": {"base_url": "http://down/v1", "api_key": "x"}},
     "models": {"fake/m": {"rpm": 100, "tpm": 8000, "rpd": 1000}, "fake/backup": {},
+               "local/m": {},
                "down/m": {}},
     "roles": {
         "r": {"model": "fake/m", "params": {"max_tokens": 100}},
         "fb": {"model": "down/m", "params": {"max_tokens": 100},
                "fallback": {"model": "fake/backup", "params": {"temperature": 0}}},
         "fb2": {"model": "fake/m", "fallback": {"model": "fake/backup"}},
+        "loc": {"model": "local/m"},
     },
 }
 
@@ -202,3 +205,21 @@ def test_blocked_model_is_refused_or_falls_back(make_llm, monkeypatch):
         llm.complete("r", MSG)          # no fallback: hard failure, nothing sent
     assert srv.requests == []
     assert llm.complete("fb2", MSG).model == "fake/backup"
+
+
+def test_scoped_budget_caps_one_thread_of_work(make_llm):
+    srv = Server(chat("a"), chat("b"))
+    llm, _ = make_llm(srv)
+    with llm.scoped(Budget({"calls": 1})):
+        llm.complete("r", MSG)
+        with pytest.raises(BudgetExceeded):
+            llm.complete("r", [{"role": "user", "content": "second"}])
+    llm.complete("r", [{"role": "user", "content": "second"}])  # outside the scope: fine
+
+
+def test_local_provider_not_charged_to_budget(make_llm):
+    srv = Server(chat("a"), chat("b"))
+    llm, _ = make_llm(srv, budget=Budget({"calls": 0, "tokens": 0}))
+    llm.complete("loc", MSG)                       # free local model: allowed
+    with pytest.raises(BudgetExceeded):
+        llm.complete("r", MSG)                     # remote: capped

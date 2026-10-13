@@ -18,6 +18,7 @@ providers:
   ollama:
     base_url: ${OLLAMA_BASE_URL:-http://localhost:11434}/v1
     api_key: ollama              # Ollama ignores it; the client needs a value
+    local: true                  # free: not charged to run budgets (still traced)
   anthropic:                     # OpenAI-compatible endpoint; untested until a key exists
     base_url: https://api.anthropic.com/v1
     api_key_env: ANTHROPIC_API_KEY

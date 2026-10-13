@@ -1,0 +1,21 @@
+# Dev questions for iterating on the research layer. NOT part of the Phase 2 gate set;
+# keep iteration here so the 20 gate questions stay an honest held-out measure.
+questions:
+  - id: hcltech_ni_fy24
+    question: What was HCLTech's net income for FY2023-24, in rupees?
+    answer: 1.5702e+11
+    unit: INR
+    tol: 0.02
+    checked: HCLTech press release (Rs 15,702 crore)
+  - id: india_power_gen_fy24
+    question: What was India's total electricity generation in FY2023-24, in kWh (units)?
+    answer: 1.738828e+12
+    unit: units
+    tol: 0.02
+    checked: Power Ministry 'Power Sector at a Glance' (1,738.828 BU)
+  - id: titan_income_fy24
+    question: What was Titan Company's consolidated total income for FY2023-24, in rupees?
+    answer: 4.7501e+11
+    unit: INR
+    tol: 0.02
+    checked: Titan results release May 2024 (~Rs 47,501 crore, excl. bullion)

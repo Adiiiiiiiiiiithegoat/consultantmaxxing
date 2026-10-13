@@ -8,7 +8,9 @@ Every call: context fit -> disk cache -> budget -> rate limiter -> retry/backoff
 import json
 import os
 import re
+import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TypeVar
@@ -77,6 +79,7 @@ class LLM:
         self.max_retries = max_retries
         self._limiters: dict[str, RateLimiter] = {}
         self._clients: dict[str, openai.OpenAI] = {}
+        self._scope = threading.local()
 
     # ---- plumbing -------------------------------------------------------------------
     def _trace(self, kind: str, **data) -> None:
@@ -102,6 +105,19 @@ class LLM:
                 base_url=p["base_url"], api_key=key, max_retries=0, timeout=180,
                 http_client=self.http_client)
         return self._clients[provider]
+
+    def _budgets(self) -> list[Budget]:
+        return [b for b in (self.budget, getattr(self._scope, "budget", None)) if b]
+
+    @contextmanager
+    def scoped(self, budget: Budget):
+        """Also enforce `budget` for calls made on this thread (e.g. one research question)."""
+        prev = getattr(self._scope, "budget", None)
+        self._scope.budget = budget
+        try:
+            yield
+        finally:
+            self._scope.budget = prev
 
     # ---- public API ------------------------------------------------------------------
     def complete(self, role: str, messages: list[dict], *, tools: list[dict] | None = None,
@@ -172,9 +188,10 @@ class LLM:
             return Completion(**{**hit["completion"], "cached": True})
 
         est = estimate_tokens(messages) + fixed
-        if self.budget:
-            self.budget.check("calls")
-            self.budget.check("tokens", est)
+        local = self.cfg["providers"][provider].get("local", False)  # no quota to spend
+        for b in ([] if local else self._budgets()):
+            b.check("calls")
+            b.check("tokens", est)
         limiter = self.limiter(model)
         ev = limiter.acquire(est, max_out)
 
@@ -197,9 +214,9 @@ class LLM:
                                                "total_tokens"}) if resp.usage else {}
         total = usage.get("total_tokens") or est
         limiter.settle(ev, total, usage.get("completion_tokens"))
-        if self.budget:
-            self.budget.charge("calls")
-            self.budget.charge("tokens", total)
+        for b in ([] if local else self._budgets()):
+            b.charge("calls")
+            b.charge("tokens", total)
 
         out = Completion(content=content.strip(), model=model,
                          tool_calls=[tc.model_dump() for tc in msg.tool_calls or []],

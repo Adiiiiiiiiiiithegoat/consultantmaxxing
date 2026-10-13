@@ -1,0 +1,127 @@
+# Fact-finding eval (Phase 2 gate): 20 questions with stable, verifiable answers.
+# Written for this repo; answers checked by hand on 2026-10-13 against company releases,
+# ministry/regulator figures and established press. `answer` is in base units (no scale
+# words: crore/lakh/million already applied). tol = relative tolerance.
+# Excluded while building: Wipro, HUL, ITC, Paytm (conflicting or unverifiable full-year
+# figures across sources).
+questions:
+  - id: infosys_rev_fy24
+    question: What was Infosys's consolidated revenue (income from operations) for FY2023-24, in rupees?
+    answer: 1.5367e+12
+    unit: INR
+    tol: 0.02
+    checked: PTI / Business Standard (Rs 1,53,670 crore)
+  - id: infosys_pat_fy24
+    question: What was Infosys's consolidated net profit for FY2023-24, in rupees?
+    answer: 2.6233e11
+    unit: INR
+    tol: 0.02
+    checked: PTI (Rs 26,233 crore)
+  - id: tcs_rev_fy24
+    question: What was Tata Consultancy Services' revenue for the full financial year FY2023-24, in rupees?
+    answer: 2.40893e12
+    unit: INR
+    tol: 0.02
+    checked: TCS press release 12 Apr 2024 (Rs 240,893 crore)
+  - id: maruti_sales_fy24
+    question: How many vehicles did Maruti Suzuki sell in total in FY2023-24?
+    answer: 2135323
+    unit: units
+    tol: 0.02
+    checked: Maruti Suzuki press releases (2,135,323 units)
+  - id: asianpaints_rev_fy24
+    question: What was Asian Paints' consolidated revenue from operations in FY2023-24, in rupees?
+    answer: 3.549473e11
+    unit: INR
+    tol: 0.02
+    checked: filing via Business Standard (Rs 35,494.73 crore; net sales Rs 35,382 crore)
+  - id: tatamotors_rev_fy24
+    question: What was Tata Motors' consolidated revenue for FY2023-24, in rupees?
+    answer: 4.37928e12
+    unit: INR
+    tol: 0.02
+    checked: Tata Motors results (Rs 4,37,928 crore)
+  - id: zomato_rev_fy24
+    question: What was Zomato's revenue from operations in FY2023-24, in rupees?
+    answer: 1.2114e11
+    unit: INR
+    tol: 0.02
+    checked: Entrackr / Equitymaster net sales (Rs 12,114 crore)
+  - id: sbi_pat_fy24
+    question: What was State Bank of India's standalone net profit for FY2023-24, in rupees?
+    answer: 6.1077e11
+    unit: INR
+    tol: 0.02
+    checked: SBI results via Business Standard / Angel One (Rs 61,077 crore)
+  - id: coal_prod_fy24
+    question: What was India's total coal production in FY2023-24, in tonnes?
+    answer: 9.9783e8
+    unit: tonnes
+    tol: 0.02
+    checked: Ministry of Coal year-end review (997.83 MT; annual report provisional 997.25 MT)
+  - id: upi_volume_fy24
+    question: How many UPI transactions were processed in India in FY2023-24?
+    answer: 1.3113e11
+    unit: transactions
+    tol: 0.02
+    checked: Lok Sabha reply / NPCI via IANS (13,112.95 crore transactions)
+  - id: pv_sales_fy24
+    question: What were domestic passenger vehicle sales in India in FY2023-24 according to SIAM, in units?
+    answer: 4218746
+    unit: units
+    tol: 0.02
+    checked: SIAM via PTI (42,18,746 units)
+  - id: indigo_pat_fy24
+    question: What was InterGlobe Aviation (IndiGo)'s net profit for FY2023-24, in rupees?
+    answer: 8.17247e10
+    unit: INR
+    tol: 0.02
+    checked: company release / Business Standard (Rs 8,172.47 crore)
+  - id: census_pop_2011
+    question: What was India's total population according to Census 2011?
+    answer: 1210854977
+    unit: people
+    tol: 0.01
+    checked: Census 2011 final figure (provisional 1,210.19 million is within tolerance)
+  - id: census_literacy_2011
+    question: What was India's literacy rate according to Census 2011, in percent?
+    answer: 74.04
+    unit: "%"
+    tol: 0.005
+    checked: Census 2011 (74.04%)
+  - id: crude_steel_fy24
+    question: What was India's crude steel production in FY2023-24, in tonnes?
+    answer: 1.44299e8
+    unit: tonnes
+    tol: 0.02
+    checked: Ministry of Steel annual report citing JPC (144.299 MT)
+  - id: airtel_arpu_q4fy24
+    question: What was Bharti Airtel's India mobile ARPU in Q4 FY2023-24 (quarter ended March 2024), in rupees?
+    answer: 209
+    unit: INR
+    tol: 0.01
+    checked: Airtel results via Business Standard (Rs 209)
+  - id: nykaa_rev_fy24
+    question: What was FSN E-Commerce Ventures (Nykaa)'s consolidated revenue from operations in FY2023-24, in rupees?
+    answer: 6.3856e10
+    unit: INR
+    tol: 0.02
+    checked: company results via press (Rs 6,385.6 crore)
+  - id: hdfcbank_pat_fy24
+    question: What was HDFC Bank's standalone net profit for FY2023-24, in rupees?
+    answer: 6.081227e11
+    unit: INR
+    tol: 0.02
+    checked: results via UNI / ICICI Direct (Rs 60,812.27 crore)
+  - id: lt_rev_fy24
+    question: What was Larsen & Toubro's consolidated revenue for FY2023-24, in rupees?
+    answer: 2.21113e12
+    unit: INR
+    tol: 0.02
+    checked: L&T results release 8 May 2024 (Rs 2,21,113 crore)
+  - id: jio_arpu_q4fy24
+    question: What was Reliance Jio's ARPU in Q4 FY2023-24 (quarter ended March 2024), in rupees per month?
+    answer: 181.7
+    unit: INR
+    tol: 0.01
+    checked: Jio Platforms results via press (Rs 181.7, flat across Q2-Q4 FY24)
