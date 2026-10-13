@@ -172,3 +172,20 @@ per model, so roles are spread across them:
 - Baseline results made with the unstable matcher were moved to
   `eval_results/_discarded/baseline-v2-unstable-matcher` and are being rerun; all kept
   baseline results use the same simulator the system will face in Phase 7.
+
+**Baseline isolation (agreed with the user, 2026-10-13)**
+- Phase 2 proceeds in parallel; Phase 1 stays "in progress" until all 15 baseline results
+  are in.
+- The baseline runs from a git worktree pinned to commit `b557bfe`
+  (`D:/Projects/consultantmaxxing-baseline`, detached HEAD), so Phase 2 changes can't reach
+  it. Gitignored inputs (`.env`, `data/derived`, `.llm_cache`) were copied in once. Each
+  result stores `code_version` (commit hash, `-dirty` if tracked files differ); the summary
+  lists all versions seen. The driver retries every 20 min when quota is out; its log is
+  `baseline_driver.log` in the worktree. When it finishes, copy
+  `eval_results/baseline*` back to the main checkout.
+- gpt-oss-120b is reserved for the baseline: the main checkout's `.env` sets
+  `CONSULTANT_BLOCK_MODELS=groq/openai/gpt-oss-120b`, and the client refuses blocked models
+  before sending anything (fallback roles move on; others raise `ModelBlocked`; unit-tested).
+  Remove that line once the baseline is done.
+- Caveat: the worktree has its own limiter state, so the two processes don't see each
+  other's use of gpt-oss-20b / qwen. The server's 429s (with backoff) cover the overlap.

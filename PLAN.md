@@ -208,6 +208,10 @@ originality check (no long verbatim overlaps with source text, e.g. no shared
   strongest counterargument, CEO questions, and an anti-agreeableness check (if the
   answer just confirms the client's initial belief, it must be justified)
 
+- [ ] After the first end-to-end runs: measure tokens per full engagement (per model),
+  estimate Phase 7 duration on the free tier, propose options (spread roles across models,
+  a 5-case dev eval set for iteration, the full 15 only for the final run); note in PROGRESS.md
+
 **Gate:** 3 train cases run end-to-end in case mode within budget and produce all
 artefacts; partner catches the planted flaw in ≥4 of 5 seeded bad drafts
 (unsupported claim, maths error, non-sequitur recommendation, missing obvious

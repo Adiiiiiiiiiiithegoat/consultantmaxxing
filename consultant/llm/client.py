@@ -35,6 +35,10 @@ class StructuredOutputError(LLMError):
     pass
 
 
+class ModelBlocked(LLMError):
+    """Model listed in CONSULTANT_BLOCK_MODELS (e.g. reserved for a running eval)."""
+
+
 @dataclass
 class Completion:
     content: str
@@ -110,7 +114,7 @@ class LLM:
             try:
                 return self._call(role, model, messages, tools, cache, json_mode,
                                   {**base, **params})
-            except (QuotaExhausted, openai.APIConnectionError) as e:
+            except (QuotaExhausted, ModelBlocked, openai.APIConnectionError) as e:
                 if i == len(chain) - 1:
                     raise
                 self._trace("fallback", role=role, model=model, error=repr(e))
@@ -145,6 +149,8 @@ class LLM:
 
     # ---- one model call ----------------------------------------------------------------
     def _call(self, role, model, messages, tools, use_cache, json_mode, params) -> Completion:
+        if model in os.environ.get("CONSULTANT_BLOCK_MODELS", "").split(","):
+            raise ModelBlocked(f"{model} is blocked by CONSULTANT_BLOCK_MODELS ({role})")
         provider, name = model.split("/", 1)
         spec = self.cfg["models"].get(model, {})
         if spec.get("max_output") and params.get("max_tokens", 0) > spec["max_output"]:

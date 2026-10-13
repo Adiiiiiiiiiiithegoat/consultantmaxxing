@@ -191,3 +191,14 @@ def test_groq_json_validate_failed_400_is_retried(make_llm):
     llm, _ = make_llm(srv)
     assert llm.structured("r", MSG, Answer).city == "Pune"
     assert "failed validation" in srv.requests[1]["messages"][-1]["content"]
+
+
+def test_blocked_model_is_refused_or_falls_back(make_llm, monkeypatch):
+    from consultant.llm import ModelBlocked
+    monkeypatch.setenv("CONSULTANT_BLOCK_MODELS", "fake/m")
+    srv = Server(chat("from backup"))
+    llm, _ = make_llm(srv)
+    with pytest.raises(ModelBlocked):
+        llm.complete("r", MSG)          # no fallback: hard failure, nothing sent
+    assert srv.requests == []
+    assert llm.complete("fb2", MSG).model == "fake/backup"
