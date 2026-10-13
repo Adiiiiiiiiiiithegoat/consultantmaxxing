@@ -4,6 +4,8 @@ The LLM only *matches* the question to case items; the reply is the case's own t
 interviewer can never invent or leak data it wasn't asked for.
 """
 
+import unicodedata
+
 from pydantic import BaseModel, Field
 
 from consultant.knowledge.schema import Case
@@ -43,6 +45,7 @@ class Interviewer:
                          for i, (topic, data) in enumerate(self.items))
 
     def ask(self, question: str) -> str:
+        question = unicodedata.normalize("NFKC", question).replace("‑", "-")
         ids: list[int] = []
         if self.items:
             msgs = [{"role": "system", "content": MATCH_SYS},

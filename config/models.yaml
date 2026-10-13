@@ -69,7 +69,7 @@ roles:
     params: {temperature: 0.0, max_tokens: 1000, reasoning_effort: none}
   interviewer:                   # case-mode simulator: matches questions to case data
     model: groq/openai/gpt-oss-20b
-    params: {temperature: 0.0, max_tokens: 800, reasoning_effort: low}
+    params: {temperature: 0.0, max_tokens: 1200, reasoning_effort: medium}  # low flip-flopped
     fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
   baseline:                      # plain single-model consultant; same model as the EM for fairness
     model: groq/openai/gpt-oss-120b

@@ -14,6 +14,8 @@ BAKERY = Case(
            answer="Profits fell 20% over two years; they want them restored within 18 months."),
         QA(question="Where does the client operate and what does it sell?",
            answer="12 outlets in Pune selling bread, cakes and coffee; cakes are 70% of revenue."),
+        QA(question="candidate asks about constraints",
+           answer="No budget constraints; they will not close any outlet."),
     ],
     data_reveals=[
         DataReveal(trigger="revenue trend by product line",
@@ -37,11 +39,13 @@ BAKERY = Case(
 RELEVANT = [
     ("By how much have profits dropped, and by when must this be fixed?", 0),
     ("Which city is the client in, and what products does it sell?", 1),
-    ("How have sales moved across bread, cakes and coffee?", 2),
-    ("Could I see how the cost base has changed, line by line?", 3),
-    ("How do the client's prices compare with rival bakeries?", 4),
-    ("How does the client source butter and flour? Any supplier contracts?", 5),
-    ("Has the number of customers visiting the outlets changed?", 6),
+    ("What budget or headcount constraints does the client have for the turnaround "
+     "within the next 3‑6 months?", 2),  # regression: once missed at low reasoning
+    ("How have sales moved across bread, cakes and coffee?", 3),
+    ("Could I see how the cost base has changed, line by line?", 4),
+    ("How do the client's prices compare with rival bakeries?", 5),
+    ("How does the client source butter and flour? Any supplier contracts?", 6),
+    ("Has the number of customers visiting the outlets changed?", 7),
 ]
 IRRELEVANT = [
     "What is the CEO's favourite cricket team?",
@@ -61,9 +65,9 @@ class FakeLLM:
 
 
 def test_reply_is_case_text_and_bad_ids_are_ignored():
-    iv = Interviewer(BAKERY, FakeLLM([3, 99, -1]))
+    iv = Interviewer(BAKERY, FakeLLM([4, 99, -1]))
     assert iv.ask("costs?") == BAKERY.data_reveals[1].data
-    assert iv.revealed == {3}
+    assert iv.revealed == {4}
     iv.llm = FakeLLM([])
     assert iv.ask("anything else?") == NOT_AVAILABLE
 

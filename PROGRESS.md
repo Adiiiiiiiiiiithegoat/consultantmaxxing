@@ -162,3 +162,13 @@ per model, so roles are spread across them:
   ~22h while Groq still accepted requests. The day check is now a bucket replayed from the
   same event log (`_bucket_wait`), unit-tested for partial refill. The per-minute windows
   are unchanged.
+
+**Simulator stability fix (found via baseline run 3)**
+- The interviewer matcher (gpt-oss-20b, reasoning low) flip-flopped: the same "budget or
+  headcount constraints" question matched the case's constraints item when typed with ASCII
+  hyphens but not with U+2011 hyphens. Now reasoning_effort medium, and questions are
+  NFKC-normalised. The gate test gained this exact pattern as a 3rd relevant question
+  (stricter, now 8 relevant / 5 irrelevant); it passes.
+- Baseline results made with the unstable matcher were moved to
+  `eval_results/_discarded/baseline-v2-unstable-matcher` and are being rerun; all kept
+  baseline results use the same simulator the system will face in Phase 7.
