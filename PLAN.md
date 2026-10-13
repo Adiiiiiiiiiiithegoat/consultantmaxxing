@@ -112,6 +112,10 @@ tests/
 
 Each phase ends with a gate. Proceed only when it passes (see CLAUDE.md working loop).
 
+> **Build-only mode (since 2026-10-13):** live-LLM gate items are deferred until a paid key
+> (see CLAUDE.md and DEFERRED_EVALS.md). Phases advance on offline tests (deterministic code
+> + mocked/recorded LLM responses); live gate tooling is built but not run.
+
 ### Phase 0 — Foundations
 - [x] Project scaffold (`uv`, ruff, pytest), config loading, `.env`
 - [x] Provider layer: Groq + Ollama working; Anthropic/OpenAI adapters present but untested
@@ -150,16 +154,16 @@ a strong reference answer scores clearly higher than a deliberately flawed one o
 ≥4 of 5 cases; baseline scores recorded in `eval_results/baseline.json`.
 
 ### Phase 2 — Research layer
-- [ ] `SearchProvider` (ddgs default), fetcher with caching, robots.txt, PDF support
-- [ ] Source-type classification and credibility ranking (filings/regulators/government
+- [x] `SearchProvider` (ddgs default), fetcher with caching, robots.txt, PDF support
+- [x] Source-type classification and credibility ranking (filings/regulators/government
   > established research & business press > trade press > blogs/forums)
-- [ ] **Fact store** (SQLite): claim, value, unit, entity, period, source_url, source_title,
+- [x] **Fact store** (SQLite): claim, value, unit, entity, period, source_url, source_title,
   source_date, quote, source_type, credibility, retrieved_at, hypothesis_ids,
   engagement_id
-- [ ] Triangulation: key numbers need ≥2 independent sources; conflicts stored as ranges
-- [ ] **Citation verifier:** re-fetch the source and check the quote supports the claim
-- [ ] Estimation fallback: top-down / bottom-up guesstimate with an assumptions register
-- [ ] **Research Associate** agent: question → search plan → read → extract facts →
+- [x] Triangulation: key numbers need ≥2 independent sources; conflicts stored as ranges
+- [x] **Citation verifier:** re-fetch the source and check the quote supports the claim
+- [x] Estimation fallback: top-down / bottom-up guesstimate with an assumptions register
+- [x] **Research Associate** agent: question → search plan → read → extract facts →
   gap check → brief with confidence; hard caps on searches/pages/tokens
 
 **Gate:** fact-finding eval of 20 questions with stable, verifiable answers (e.g.

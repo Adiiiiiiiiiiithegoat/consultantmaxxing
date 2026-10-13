@@ -32,6 +32,27 @@ at the start of every session.
 7. **Never weaken a test or gate to make it pass.** If a gate is wrong, say so in
    PROGRESS.md and explain why before changing it.
 
+## Build-only mode (in force since 2026-10-13, until a paid model key is available)
+
+Groq free-tier limits made live evaluation take ~20h per eval, so the build continues
+without live gates:
+- **Do not run live-LLM gate items**: no baseline runs, fact-finding eval, judge/partner
+  discrimination tests, full-system evals, or retrieval evals that need LLM calls. Build
+  all of that tooling so it runs later with one command; list each check in
+  **DEFERRED_EVALS.md** (in run order).
+- **Offline tests are the gate**: unit tests for deterministic code and tests with
+  mocked or recorded LLM responses. Keep `uv run pytest` green. Record a real response
+  once as a fixture if a test needs one.
+- **Live calls only as wiring smoke tests**: at most 1–2 small calls per phase, on the
+  smallest suitable model or local Ollama. Never gpt-oss-120b (the main `.env` blocks it
+  via `CONSULTANT_BLOCK_MODELS`).
+- Each phase ends: offline tests green → PROGRESS.md (built, untested live, risks) →
+  commit → next phase. Stop only for real blockers or design decisions.
+- Don't start long background runs (the machine is memory-constrained and Claude Code
+  kills background jobs under memory pressure).
+
+The working loop below applies again once live evals resume.
+
 ## Working loop
 
 Build phase by phase as PLAN.md defines. For each phase:

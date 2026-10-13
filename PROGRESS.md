@@ -1,12 +1,15 @@
 # Progress
 
+**Mode: build-only since 2026-10-13** (see CLAUDE.md). Live gate checks are listed in
+DEFERRED_EVALS.md; phases advance on offline tests.
+
 Updated by Claude Code at the end of every phase. A fresh session resumes from here.
 
 | Phase | Status | Gate result | Notes |
 |---|---|---|---|
 | 0 Foundations | done | pass: 15 unit + 2 live (2 skipped: no keys) | see log 2026-10-13 |
-| 1 Knowledge + eval foundation | in progress | all items pass except baseline (running, quota-paced) | see log |
-| 2 Research layer | in progress | gate eval running | see log |
+| 1 Knowledge + eval foundation | built; baseline eval deferred | offline green; live: extraction, spot-check, simulator, judge passed; baseline 0/15 (deferred) | DEFERRED_EVALS.md §1 |
+| 2 Research layer | built; live gate deferred | offline green (39 tests) | DEFERRED_EVALS.md §2 |
 | 3 Analysis + engagement state | not started | | |
 | 4 Playbooks + retrieval | not started | | |
 | 5 Agents + engagement loop | not started | | |
@@ -238,3 +241,23 @@ sources, over-quoted queries.
   independent sources; the brief should rate such answers low.
 - The local extractor (qwen3:4b-instruct) is the quality bottleneck. A 7B local model would
   likely help, but the machine had only 0.7GB free RAM, so I didn't pull one.
+
+### 2026-10-13: switch to build-only mode (user decision)
+- Groq free-tier limits made live evals take ~20h each, and Claude Code killed background
+  runs twice under memory pressure. The user switched the build to build-only mode
+  (CLAUDE.md, PLAN.md, DEFERRED_EVALS.md updated).
+- The baseline driver was stopped (killed under memory pressure) with **0/15** results in the
+  pinned worktree; its cached calls replay free on resume. **Phase 1 = built; baseline eval
+  deferred.**
+- Phase 2 gate eval, attempt 1 (interrupted): 2/5 correct on the first five gate questions
+  (Maruti, Asian Paints right; Infosys revenue null; Infosys PAT and TCS revenue wrong).
+  Failure analysis led to general fixes, untested live: column layouts only for table
+  expansion, ≤1 extra (TTM) cell, prose never expanded, header must be table-like and not
+  the row itself.
+- Main `.env` keeps `CONSULTANT_BLOCK_MODELS=groq/openai/gpt-oss-120b` as a guard: smoke
+  tests must never touch 120b.
+
+**Phase 2 = built; live gate deferred.** Untested live: accuracy, verifier rate on real pages
+after the latest table fixes, estimation fallback. Risks: free web sources (blocked
+government sites, wrong aggregator tables), a small local extractor, and DDG search
+quality. The keyed-search and bigger-extractor options are in the notes above.
