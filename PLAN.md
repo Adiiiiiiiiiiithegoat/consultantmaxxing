@@ -223,13 +223,13 @@ branch, client-pleasing conclusion); one real-mode run completes on a simple
 public-company question.
 
 ### Phase 6 — Deliverables
-- [ ] Executive memo (markdown → also .docx/.pdf optional): answer first, 3–5 supporting
+- [x] Executive memo (markdown → also .docx/.pdf optional): answer first, 3–5 supporting
   arguments, risks, next steps
-- [ ] Slide storyline: action titles that read as a story alone + supporting data per
+- [x] Slide storyline: action titles that read as a story alone + supporting data per
   slide (JSON + markdown; .pptx rendering optional)
-- [ ] Model spreadsheet via openpyxl with live formulas and an inputs/assumptions tab
-- [ ] Sources appendix generated from the fact store with credibility labels
-- [ ] Assumptions & confidence page: estimates, uncertainty, what data would change the
+- [x] Model spreadsheet via openpyxl with live formulas and an inputs/assumptions tab
+- [x] Sources appendix generated from the fact store with credibility labels
+- [x] Assumptions & confidence page: estimates, uncertainty, what data would change the
   answer
 
 **Gate:** validator confirms every number in memo/storyline maps to a fact id,

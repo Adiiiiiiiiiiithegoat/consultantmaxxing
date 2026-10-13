@@ -50,3 +50,9 @@ Re-run after changing the index: `uv run pytest tests/test_knowledge.py`.
 | 5.4 | Token actuals | `uv run python -m consultant.evals.token_estimate --traces eval-system-train` | replace the PROGRESS.md estimate |
 
 Use a 5-case **train** subset (`--n 5`) for iteration; never iterate on the test split.
+
+## 5. Phase 6: deliverables
+Gate ran offline (validator, live formulas, action titles). Deferred live check:
+| # | Check | Command | Pass criterion |
+|---|---|---|---|
+| 6.1 | Deliverables from real engagements validate | after 5.1/5.3: inspect `engagements/<name>/*/deliverables/validation.json` | `passed: true` for every engagement; any flags reviewed by hand |

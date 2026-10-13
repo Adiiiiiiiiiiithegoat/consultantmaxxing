@@ -8,6 +8,7 @@ engagements/<id>/
   deliverables/    memo, storyline, model.xlsx, appendix
 """
 
+import re
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,6 +67,10 @@ class AnalysisRecord(BaseModel):
     error: str | None = None
     hypothesis_ids: list[str] = Field(default_factory=list)
     created_at: str = Field(default_factory=now)
+    # spreadsheet rows: {"name", "expression" over F#/S#/earlier names, "unit"}; mirrored as
+    # live Excel formulas in model.xlsx and checked against `result`
+    formulas: list[dict[str, Any]] = Field(default_factory=list)
+    formula_issues: list[str] = Field(default_factory=list)
 
 
 class WorkspaceState(BaseModel):
@@ -155,16 +160,50 @@ class Workspace:
         return h
 
     def run_analysis(self, name: str, purpose: str, code: str,
-                     hypothesis_ids: list[str] | None = None, **kw) -> AnalysisRecord:
+                     hypothesis_ids: list[str] | None = None,
+                     formulas: list[dict] | None = None, **kw) -> AnalysisRecord:
         """Run code in the sandbox and index the result; numbers live in result.json."""
         res = sandbox.run(code, self.dir / "analyses", name, **kw)
         rec = AnalysisRecord(id=f"A{len(self.state.analyses) + 1}", name=name, purpose=purpose,
                              dir=str(res.workdir.relative_to(self.dir)), ok=res.ok,
                              result=res.result, error=res.error,
-                             hypothesis_ids=hypothesis_ids or [])
+                             hypothesis_ids=hypothesis_ids or [],
+                             formulas=formulas or [])
+        if rec.ok and rec.formulas:
+            rec.formula_issues = self.check_formulas(rec)
         self.state.analyses.append(rec)
         for hid in rec.hypothesis_ids:
             if any(h.id == hid for h in self.state.hypotheses):
                 self.hypothesis(hid).analysis_ids.append(rec.id)
         self.save()
         return rec
+
+    def input_values(self) -> dict[str, float]:
+        eid = self.state.engagement_id
+        vals = {f"F{f.id}": f.value for f in self.facts.facts(eid) if f.value is not None}
+        vals |= {f"S{a.id}": a.value for a in self.facts.assumptions(eid)}
+        return vals
+
+    def check_formulas(self, rec: AnalysisRecord) -> list[str]:
+        """Each formula, evaluated over the inputs, must equal the sandbox RESULT value."""
+        from consultant.research.estimate import safe_eval
+        names, issues = self.input_values(), []
+        inputs = dict(names)
+        for row in rec.formulas:
+            for lit in re.findall(r"(?<![\w.])\d+(?:\.\d+)?(?![\w.])", row["expression"]):
+                x = float(lit)
+                hits = [k for k, v in inputs.items()
+                        if x not in (0, 1, 10, 100, 1000) and abs(v - x) <= 1e-9 * max(1, abs(x))]
+                if hits:  # typed-in input: the spreadsheet wouldn't be live
+                    issues.append(f"{row['name']}: hard-codes {lit}; reference {hits[0]} "
+                                  "instead so the model stays live")
+            try:
+                v = safe_eval(row["expression"], names)
+            except (ValueError, KeyError, ZeroDivisionError, SyntaxError) as e:
+                issues.append(f"{row['name']}: cannot evaluate ({e})")
+                continue
+            names[row["name"]] = v
+            want = (rec.result or {}).get(row["name"])
+            if not isinstance(want, int | float) or abs(v - want) > 1e-6 * max(1, abs(want)):
+                issues.append(f"{row['name']}: formula gives {v}, sandbox gave {want}")
+        return issues

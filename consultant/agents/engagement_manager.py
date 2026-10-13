@@ -20,6 +20,7 @@ from consultant import deliverables
 from consultant.agents import analyst, partner, storyliner
 from consultant.agents.research_associate import ResearchAssociate
 from consultant.config import profile as load_profile
+from consultant.deliverables.validate import validate_draft
 from consultant.knowledge import playbooks
 from consultant.knowledge.retrieval import Retriever, add_primer
 from consultant.knowledge.schema import CaseType
@@ -297,6 +298,20 @@ class Engagement:
                        [f.id for f in good[:15]])
         return stats
 
+    def _review(self, d: storyliner.Draft) -> dict:
+        """Partner review plus the deterministic validator: an untraceable number or a
+        topic-only slide title is a major issue even if the partner missed it."""
+        st = self.ws.state
+        rv = partner.review(self.llm, st.scope["restated_question"],
+                            st.scope.get("client_prior", ""), storyliner.render_text(d),
+                            evidence_text(self.ws, verified_only=True))
+        for i in validate_draft(self.ws, d):
+            kind = "unsupported_claim" if i["kind"] != "no_action_title" else "other"
+            rv.issues.append(partner.Issue(kind=kind, severity="major", where=i["where"],
+                                           detail=f"[validator] {i['detail']}"))
+            rv.verdict = "revise"
+        return rv.model_dump()
+
     # ---- run -------------------------------------------------------------------------
     def run(self) -> dict:
         ws, st = self.ws, self.ws.state
@@ -321,10 +336,7 @@ class Engagement:
             draft = storyliner.Draft(**ws.step(
                 "story0", lambda: storyliner.write(self.llm, self._brief()).model_dump()))
             for r in range(MAX_REVIEW_ROUNDS):
-                rv = partner.Review(**ws.step(f"review{r}", lambda d=draft: partner.review(
-                    self.llm, st.scope["restated_question"], st.scope.get("client_prior", ""),
-                    storyliner.render_text(d), evidence_text(ws, verified_only=True))
-                    .model_dump()))
+                rv = partner.Review(**ws.step(f"review{r}", lambda d=draft: self._review(d)))
                 if rv.verdict == "approve" or r == MAX_REVIEW_ROUNDS - 1:
                     break
                 draft = storyliner.Draft(**ws.step(f"story{r + 1}", lambda rv=rv: storyliner.write(

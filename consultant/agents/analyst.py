@@ -21,14 +21,27 @@ ANALYST_SYS = (
     "Use ONLY numbers from FACTS[<fact id>] and ASSUMPTIONS['S<id>'] (already defined) or "
     "from the request itself; never invent data. You may import the templates below and the "
     "standard library (no network, no files). Assign a dict of named, JSON-serialisable "
-    "outputs to RESULT; include the key inputs you used so a reader can audit the result.\n\n"
+    "outputs to RESULT; include the key inputs you used so a reader can audit the result. "
+    "Also give `excel` rows: each headline output that is plain arithmetic, written as a "
+    "formula over F<id>/S<id> (same calculation as the code; it must give the same number)."
+    "\n\n"
     + TEMPLATES_DOC)
+
+
+class FormulaRow(BaseModel):
+    name: str = Field(description="a RESULT key (python identifier)")
+    expression: str = Field(description="arithmetic over F<id>, S<id> and earlier row names "
+                            "with + - * / ** and parentheses, e.g. (F4 - F3) / F3 * 100")
+    unit: str = ""
 
 
 class AnalysisCode(BaseModel):
     name: str = Field(description="short name, e.g. margin_bridge_fy23_fy24")
     purpose: str
     code: str = Field(description="python that sets RESULT = {...}")
+    excel: list[FormulaRow] = Field(default_factory=list, description="for each headline "
+                                    "output that is plain arithmetic, the same calculation as "
+                                    "a formula (becomes a live spreadsheet formula)")
 
 
 def preamble(facts: list[Fact], assumptions: list[Assumption]) -> str:
@@ -56,10 +69,12 @@ def analyse(llm, ws: Workspace, request: str, hypothesis_ids: list[str] | None =
     for _ in range(attempts):
         plan = llm.structured(role, msgs, AnalysisCode)
         rec = ws.run_analysis(plan.name, plan.purpose, preamble(facts, assumptions) + plan.code,
-                              hypothesis_ids=hypothesis_ids)
-        if rec.ok and rec.result is not None:
+                              hypothesis_ids=hypothesis_ids,
+                              formulas=[r.model_dump() for r in plan.excel])
+        if rec.ok and rec.result is not None and not rec.formula_issues:
             return rec
-        problem = rec.error or "the script did not set RESULT"
+        problem = rec.error or ("; ".join(rec.formula_issues) if rec.formula_issues
+                                else "the script did not set RESULT")
         msgs += [{"role": "assistant", "content": plan.code},
                  {"role": "user", "content": f"That failed: {problem}. Fix the script."}]
     return rec

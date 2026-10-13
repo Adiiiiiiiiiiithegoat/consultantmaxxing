@@ -13,7 +13,7 @@ Updated by Claude Code at the end of every phase. A fresh session resumes from h
 | 3 Analysis + engagement state | built | offline gate passed (15 tests) | no live component |
 | 4 Playbooks + retrieval | built | offline gate passed: leakage, retrieval 95.5% top-5, originality | BM25, no embeddings |
 | 5 Agents + engagement loop | built; live gate deferred | offline green (74 tests); 1 smoke call OK | DEFERRED_EVALS.md §5 |
-| 6 Deliverables | not started | | |
+| 6 Deliverables | built | offline gate passed (83 tests total); 2 smoke calls | live analyst retry path untested |
 | 7 Full evaluation | not started | | |
 | 8 Interface + hardening | not started | | |
 
@@ -379,3 +379,36 @@ Options:
    on it is tuning on the test split (rule 6).
    `run_system cases --split train --n 5`; the final `--split test` run happens once.
 4. Dev profile for iteration, full profile only for the final run.
+
+### 2026-10-13: Phase 6 Deliverables (built; gate ran offline and passed)
+- `deliverables/render`: memo.md (answer first, 1–5 action-titled arguments with evidence
+  ids, risks, next steps, open questions, a visible ⚠ block for anything untraceable),
+  storyline.json + storyline.md, **model.xlsx**, sources.md (from the fact store: claim,
+  value, linked source, date, type, credibility label, verified), assumptions.md
+  (estimates with rationale, hypothesis status, what would change the answer, risks),
+  validation.json. .docx/.pptx (optional in PLAN) not built; the markdown converts.
+- `deliverables/model_xlsx.py`: Inputs sheet (every numeric fact with source URL; every
+  assumption labelled ESTIMATE) and Model sheet where each analysis output declared by the
+  Analyst as an arithmetic formula over F#/S#/earlier outputs is written as a **live Excel
+  formula** referencing Inputs, beside the sandbox value. Non-arithmetic outputs (e.g. IRR)
+  are written as values labelled "computed in sandbox". `recalculate()` re-evaluates the
+  formulas from the saved file (no Excel needed) and `check()` compares them to the sandbox.
+- Analysis-time formula checks (`Workspace.check_formulas`): each formula must reproduce the
+  sandbox RESULT, and must not hard-code an input value. The live smoke call showed the
+  model typing `22.0-19.0` instead of `F2 - F1`; that rule now catches it and feeds the
+  Analyst a correction.
+- `deliverables/validate.py`: every number in the answer, arguments, slides, risks and next
+  steps must appear in evidence cited by that same element (fact value/quote/claim/table
+  header, analysis output, assumption) or in the client's question. Handles fraction ↔
+  percent, displayed rounding and years, and skips list numbering only when it counts
+  1, 2, 3. Slides need an action title (≥4 words, not a generic topic); unknown refs
+  flagged. The engagement runs it on every draft: violations become major issues that force
+  a revision even if the partner approved.
+- **Gate (offline):** validator passes a traced draft and flags an untraceable "12%",
+  topic titles and unknown refs; the workbook's formulas recalculate to the sandbox values
+  and change when an input changes; every slide has an action title; render writes all
+  artefacts; validation fails on non-live formulas; in a scripted engagement an
+  untraceable number forces a second draft.
+- **Live smoke (2 calls, gpt-oss-20b):** the Analyst produced a correct sandbox result and
+  formula rows; the hard-coded-input finding came from this. Untested live: the Analyst's
+  corrective retry after that finding (the rerun hit the cache).
