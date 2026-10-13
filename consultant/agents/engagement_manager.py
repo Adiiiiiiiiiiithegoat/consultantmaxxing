@@ -124,8 +124,9 @@ class Engagement:
     def __init__(self, llm, ws: Workspace, *, interviewer=None, web=None,
                  retriever: Retriever | None = None,
                  checkpoint: Callable[[str, Workspace], str | None] | None = None,
-                 role: str = "engagement_manager"):
+                 role: str = "engagement_manager", as_of: str | None = None):
         self.llm, self.ws, self.iv, self.web = llm, ws, interviewer, web
+        self.as_of = as_of  # backtests: research only sources dated on/before this
         self.retriever = retriever or Retriever.load()
         self.checkpoint, self.role = checkpoint, role
         self.prof = load_profile(ws.state.profile)
@@ -183,7 +184,8 @@ class Engagement:
         caps = {"searches": 3, "pages": 6, "tokens": 20000}
 
         def one(q):
-            ra = ResearchAssociate(self.llm, self.web, self.ws.facts, eid, caps=caps)
+            ra = ResearchAssociate(self.llm, self.web, self.ws.facts, eid, caps=caps,
+                                   as_of=self.as_of)
             return ra.research(q, hypothesis_id=hid)
         with ThreadPoolExecutor(max_workers=2) as pool:  # parallel, still rate-limited
             for res in pool.map(one, questions):

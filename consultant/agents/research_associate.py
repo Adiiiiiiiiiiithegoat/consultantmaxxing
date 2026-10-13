@@ -100,6 +100,12 @@ def facts_table(facts: list[Fact], question: str = "") -> str:
     return "\n".join(rows)
 
 
+def dated_ok(page_date: str | None, as_of: str | None) -> bool:
+    if as_of is None:
+        return True
+    return bool(page_date) and page_date[:10] <= as_of
+
+
 def brief_problem(brief: Brief, facts: list[Fact], question: str) -> str | None:
     """A reported value must equal a cited fact for the asked period (deterministic check)."""
     if brief.value is None:
@@ -120,8 +126,12 @@ def brief_problem(brief: Brief, facts: list[Fact], question: str) -> str | None:
 class ResearchAssociate:
     def __init__(self, llm: LLM, web: Web, store: FactStore, engagement_id: str,
                  caps: dict | None = None, role: str = "research_associate",
-                 extractor_role: str = "extractor", allow_estimate: bool = True):
+                 extractor_role: str = "extractor", allow_estimate: bool = True,
+                 as_of: str | None = None):
+        """as_of (YYYY-MM-DD): backtest mode — only sources dated on/before it are read;
+        undated sources are skipped too, so nothing from after the outcome can leak in."""
         self.llm, self.web, self.store = llm, web, store
+        self.as_of = as_of
         self.engagement_id, self.caps = engagement_id, {**DEFAULT_CAPS, **(caps or {})}
         self.role, self.extractor_role = role, extractor_role
         self.allow_estimate = allow_estimate
@@ -160,6 +170,8 @@ class ResearchAssociate:
                         break
                     if page.error or len(page.text) < 200:
                         continue  # blocked/failed sources are common; try the next result
+                    if not dated_ok(page.date, self.as_of):
+                        continue  # backtest: source not provably from before the cut-off
                     read += 1
                     found, rej = extract_facts(self.llm, page, question, self.extractor_role)
                     rejected += rej

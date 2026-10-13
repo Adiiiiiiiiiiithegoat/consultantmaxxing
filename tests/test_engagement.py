@@ -194,6 +194,13 @@ class RealModeLLM(ScriptedLLM):
     def Entailment(self, user):
         return {"supports": True, "reason": "stated"}
 
+    def EstimatePlan(self, user):
+        return {"approach": "top_down", "unit": "INR crore", "formula": "outlets * revenue",
+                "factors": [{"name": "outlets", "value": 12, "unit": "count",
+                             "rationale": "assumed"},
+                            {"name": "revenue", "value": 2, "unit": "INR crore",
+                             "rationale": "assumed per outlet"}]}
+
     def PageFacts(self, user):
         if "reported revenue" in user:
             q = "Acme Ltd reported revenue from operations of Rs 1,200 crore in FY2024"

@@ -56,3 +56,16 @@ Gate ran offline (validator, live formulas, action titles). Deferred live check:
 | # | Check | Command | Pass criterion |
 |---|---|---|---|
 | 6.1 | Deliverables from real engagements validate | after 5.1/5.3: inspect `engagements/<name>/*/deliverables/validation.json` | `passed: true` for every engagement; any flags reviewed by hand |
+
+## 6. Phase 7: full evaluation (run last, in this order)
+| # | Step | Command | Notes |
+|---|---|---|---|
+| 7.1 | Verify backtest outcomes | edit `consultant/evals/backtests.yaml`: check each `outcome` against a primary source, set `verified: true` | the runner skips unverified ones |
+| 7.2 | Iterate on a 5-case **train** subset | `uv run python -m consultant.evals.run_system cases --split train --n 5 --name system-dev` | debug the weakest layer here, never on the test split |
+| 7.3 | Baseline on the 15 test cases | `uv run python -m consultant.evals.baseline` | same model as the engagement manager (see 1.3) |
+| 7.4 | Full system on the 15 test cases (once) | `uv run python -m consultant.evals.run_system cases --split test --name system-test --profile dev` | `--profile full` for the final run if budget allows |
+| 7.5 | Backtests | `uv run python -m consultant.evals.backtests` | 3 real-mode runs |
+| 7.6 | Report + gate | `uv run python -m consultant.evals.report` | writes EVAL_REPORT.md; gate: beat baseline on aggregate and ≥6/9 dimensions |
+
+If 7.6 fails: fix the weakest layer using 7.2 (train cases), re-run 7.4 at most 3 times, then
+escalate. Cost and time: see the token estimate in PROGRESS.md (Phase 5).

@@ -153,7 +153,11 @@ def parse(url: str, content: bytes, content_type: str) -> Page:
                     content_type="pdf")
     import trafilatura
     html = content.decode("utf-8", errors="replace")
-    doc = trafilatura.bare_extraction(html, url=url, with_metadata=True)
+    # dates only from the page's own metadata/markup: body-text guessing turns "FY2024"
+    # into 2024-01-01, which would let post-cut-off pages through in backtests
+    doc = trafilatura.bare_extraction(html, url=url, with_metadata=True,
+                                      date_extraction_params={"extensive_search": False,
+                                                              "original_date": True})
     if not doc:
         return Page(url, "", "", error="no extractable text")
     d = doc if isinstance(doc, dict) else doc.as_dict()

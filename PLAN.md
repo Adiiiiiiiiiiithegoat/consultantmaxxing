@@ -237,13 +237,14 @@ analysis output or assumption id; .xlsx opens and formulas recalculate to the
 sandbox values; every slide has an action title.
 
 ### Phase 7 — Full evaluation and debugging
-- [ ] Run all held-out cases through the full system and the baseline (case mode)
-- [ ] Research backtests: 3 real-mode problems using lesser-known companies or events
-  after the model's knowledge cutoff, or restricting sources to dates before the
-  outcome
-- [ ] `EVAL_REPORT.md`: per-dimension scores, system vs baseline, cost/tokens per run,
-  and failure analysis classified by layer (playbook gap / research / analysis /
-  synthesis / orchestration)
+- [x] Runner: held-out cases through the full system and the baseline (case mode)
+- [x] Research backtests tooling: real-mode problems answered as of a past date (sources
+  restricted to on/before it), scored against the outcome
+- [x] `EVAL_REPORT.md` generator: per-dimension scores, system vs baseline, tokens per run,
+  failure analysis by layer, gate verdict
+- [ ] (deferred, paid key) Verify the 3 backtest outcomes, then run backtests
+- [ ] (deferred, paid key) Iterate on a 5-case train subset; final run on the 15 test cases
+  + baseline; write EVAL_REPORT.md
 
 **Gate:** system beats baseline on aggregate judge score and on at least 6 of 9
 rubric dimensions; report written. If not, iterate on the weakest layer (max 3

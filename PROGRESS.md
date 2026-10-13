@@ -14,7 +14,7 @@ Updated by Claude Code at the end of every phase. A fresh session resumes from h
 | 4 Playbooks + retrieval | built | offline gate passed: leakage, retrieval 95.5% top-5, originality | BM25, no embeddings |
 | 5 Agents + engagement loop | built; live gate deferred | offline green (74 tests); 1 smoke call OK | DEFERRED_EVALS.md §5 |
 | 6 Deliverables | built | offline gate passed (83 tests total); 2 smoke calls | live analyst retry path untested |
-| 7 Full evaluation | not started | | |
+| 7 Full evaluation | tooling built; evals deferred | offline green (88 tests) | DEFERRED_EVALS.md §6 |
 | 8 Interface + hardening | not started | | |
 
 ## Blockers
@@ -412,3 +412,26 @@ Options:
 - **Live smoke (2 calls, gpt-oss-20b):** the Analyst produced a correct sandbox result and
   formula rows; the hard-coded-input finding came from this. Untested live: the Analyst's
   corrective retry after that finding (the rerun hit the cache).
+
+### 2026-10-13: Phase 7 Full evaluation (tooling built; all runs deferred)
+- Held-out evaluation: `evals/run_system.py cases --split test` (system + judge) and
+  `evals/baseline.py` (same simulator and judge); both resumable and commit-stamped.
+- `evals/backtests.py` + `backtests.yaml`: 3 real-mode problems answered as of a past date
+  (India FY25 GDP growth as of Dec 2024; Ola Electric e-2W leadership as of Sep 2024;
+  IndusInd Bank risks as of Jan 2025), scored by the judge model on call correctness,
+  key-point recall, calibration and evidence. **The outcomes were written from memory and
+  are marked `verified: false`; the runner skips unverified backtests by default.**
+  Research in backtest mode (`as_of`) only reads sources dated on/before the cut-off and
+  skips undated ones.
+- **Leak fixed:** trafilatura guessed a page date of 2024-01-01 from the body text "FY2024".
+  Dates now come only from page metadata/markup (`extensive_search=False`,
+  `original_date=True`); covered by a test.
+- `evals/report.py` writes EVAL_REPORT.md: gate (system beats baseline on aggregate and
+  ≥6/9 dimensions, compared on the same cases only), per-dimension table, tokens per run,
+  first-pass failure triage by layer (weak dimension → playbook gap / research / analysis /
+  synthesis / orchestration), backtest summary.
+- Offline tests: date rule; backtest-mode research reads nothing undated; report gate
+  pass/fail including "aggregate wins but only 5/9 dimensions" → FAIL; triage counts;
+  backtest runner skips unverified and scores when included.
+- Untested live: everything in this phase. No smoke call needed (the judge already ran
+  live in Phase 1).

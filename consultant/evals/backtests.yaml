@@ -1,0 +1,40 @@
+# Research backtests (Phase 7): real-mode problems answered "as of" a past date, scored
+# against what actually happened. Research only reads sources dated on/before `as_of`
+# (undated sources are skipped). Pick events after the models' training cutoff where
+# possible; otherwise the date restriction limits, but cannot remove, hindsight.
+#
+# STATUS: outcomes below were written from memory on 2026-10-13 and are NOT yet verified.
+# Verify each `outcome` against a primary source and set `verified: true` before running.
+backtests:
+  - id: india_gdp_fy25
+    as_of: "2024-12-31"
+    question: >
+      As of end-2024, will India's real GDP growth for FY2024-25 (April 2024 to March 2025)
+      come in at 7% or more? What are the main drivers and risks?
+    outcome: >
+      NSO's provisional estimate (May 2025) put FY2024-25 real GDP growth at about 6.5%,
+      below 7%, after a slowdown in Q2 FY25 (urban consumption, weaker manufacturing).
+    key_points: ["growth below 7%", "Q2 FY25 slowdown", "urban consumption weakness"]
+    verified: false
+  - id: ola_e2w_share_fy25
+    as_of: "2024-09-30"
+    question: >
+      As of September 2024, should investors expect Ola Electric to remain India's
+      largest electric two-wheeler seller through March 2025? What would change that?
+    outcome: >
+      No. Ola's monthly share fell sharply in late 2024 and early 2025 amid service
+      complaints and competition; TVS and Bajaj overtook it in monthly registrations.
+    key_points: ["loses leadership", "service/quality complaints", "TVS and Bajaj gain"]
+    verified: false
+  - id: indusind_risks_2025
+    as_of: "2025-01-31"
+    question: >
+      As of January 2025, what are the most important risks for IndusInd Bank's earnings
+      and capital over the next six months?
+    outcome: >
+      In March 2025 the bank disclosed accounting discrepancies in its derivatives
+      portfolio (an adverse impact of roughly 2-2.5% of net worth), followed by management
+      changes; microfinance stress was also a material drag.
+    key_points: ["derivatives accounting discrepancy", "microfinance stress",
+                 "governance/management risk"]
+    verified: false
