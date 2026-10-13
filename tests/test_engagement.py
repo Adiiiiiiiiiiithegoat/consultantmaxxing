@@ -137,6 +137,18 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     assert "## Answer" in memo and "Unhedged butter costs" in memo and "## Risks" in memo
 
 
+
+def test_failed_analysis_does_not_crash_the_engagement(tmp_path):
+    from consultant.llm import StructuredOutputError
+
+    class BadAnalyst(ScriptedLLM):
+        def AnalysisCode(self, user):
+            raise StructuredOutputError("analyst: no valid AnalysisCode after 3 tries")
+    eng, ws, _ = engagement(tmp_path, BadAnalyst())
+    eng.run()
+    assert "deliver" in ws.state.steps_done and not ws.state.analyses
+    assert any("analysis failed" in d.decision for d in ws.state.decisions)
+
 def test_resume_after_completion_makes_no_llm_calls(tmp_path):
     eng, ws, _ = engagement(tmp_path, ScriptedLLM())
     eng.run()

@@ -24,6 +24,7 @@ from consultant.deliverables.validate import validate_draft
 from consultant.knowledge import playbooks
 from consultant.knowledge.retrieval import Retriever, add_primer
 from consultant.knowledge.schema import CaseType
+from consultant.llm import StructuredOutputError
 from consultant.research.extract import extract_facts
 from consultant.research.fact_store import Fact
 from consultant.research.verify import verify_facts
@@ -299,7 +300,10 @@ class Engagement:
                                                 branch_id=h.branch_id, priority=h.priority))
                 pending[h.id] = h.questions
         for req in a.analyses_needed:
-            analyst.analyse(self.llm, self.ws, req, [h.id for h in open_h])
+            try:
+                analyst.analyse(self.llm, self.ws, req, [h.id for h in open_h])
+            except StructuredOutputError as e:  # one failed analysis isn't fatal
+                self.ws.decide("analyst", f"analysis failed: {req[:120]}", str(e))
         resolved = all(h.status in ("supported", "killed") for h in st.hypotheses
                        if h.priority == 1)
         return {"next_questions": a.next_questions, "done": a.done or resolved}

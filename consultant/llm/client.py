@@ -164,8 +164,10 @@ class LLM:
         else:
             msgs.insert(0, {"role": "system", "content": hint})
         for attempt in range(retries + 1):
+            cut = False
             try:
                 c = self.complete(role, msgs, json_mode=True, **params)
+                cut = c.finish_reason == "length"
                 return schema.model_validate_json(extract_json(c.content))
             except openai.BadRequestError as e:
                 # Groq's JSON mode rejects invalid/empty output server-side with a 400, but
@@ -187,7 +189,9 @@ class LLM:
             self._trace("schema_retry", role=role, attempt=attempt, error=err)
             msgs += [{"role": "assistant", "content": reply[:6000]},
                      {"role": "user", "content": f"That reply failed validation:\n{err}\n"
-                      "Return the corrected JSON object only, with every required field."}]
+                      + ("It was cut off at the output-token limit: write a much shorter "
+                         "version. " if cut else "")
+                      + "Return the corrected JSON object only, with every required field."}]
         raise StructuredOutputError(f"{role}: no valid {schema.__name__} after {retries + 1} tries")
 
     # ---- one model call ----------------------------------------------------------------

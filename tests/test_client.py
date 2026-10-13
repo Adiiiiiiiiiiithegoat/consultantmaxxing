@@ -214,6 +214,17 @@ def test_json_validate_failed_salvages_or_shows_the_failed_generation(make_llm):
     assert "every required field" in retry[-1]["content"]
 
 
+
+def test_truncated_structured_reply_asks_for_a_shorter_one(make_llm):
+    # system-train run 2: the analyst's code was cut at max_tokens 3 times in a row because
+    # the retry never said the reply was too long
+    cut = chat('{"city": "Pu')
+    cut._content = cut.content.replace(b'"stop"', b'"length"')
+    srv = Server(cut, chat('{"city": "Pune", "population_m": 7.4}'))
+    llm, _ = make_llm(srv)
+    assert llm.structured("r", MSG, Answer).city == "Pune"
+    assert "cut off at the output-token limit" in srv.requests[1]["messages"][-1]["content"]
+
 def test_blocked_model_is_refused_or_falls_back(make_llm, monkeypatch):
     from consultant.llm import ModelBlocked
     monkeypatch.setenv("CONSULTANT_BLOCK_MODELS", "fake/m")
