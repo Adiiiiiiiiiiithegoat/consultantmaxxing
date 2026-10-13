@@ -64,3 +64,13 @@ def test_day_window_persists_across_restarts(tmp_path):
     lim.acquire(100)
     with pytest.raises(QuotaExhausted):
         make(c, tpd=100, state_path=path).acquire(1)
+
+
+def test_otpm_spaces_calls_after_a_long_output():
+    c = Clock()
+    lim = make(c, otpm=1000)
+    ev = lim.acquire(500, out=3000)  # admission only counts up to the cap
+    lim.settle(ev, 2000, 1500)       # the reply itself was long
+    c.t += 10
+    lim.acquire(100, out=200)
+    assert c.slept == [50.0]

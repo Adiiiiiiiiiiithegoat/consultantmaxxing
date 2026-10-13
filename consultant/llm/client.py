@@ -20,7 +20,7 @@ from pydantic import BaseModel, ValidationError
 from consultant.config import ROOT, models_config
 from consultant.llm.cache import DiskCache
 from consultant.llm.context import estimate_tokens, fit
-from consultant.llm.limiter import QuotaExhausted, RateLimiter
+from consultant.llm.limiter import QuotaExhausted, RateLimiter, RequestTooLarge
 from consultant.tracing import Budget, Tracer
 
 T = TypeVar("T", bound=BaseModel)
@@ -84,7 +84,7 @@ class LLM:
             spec = self.cfg["models"].get(model, {})
             safe = re.sub(r"[^\w.-]", "_", model)
             self._limiters[model] = RateLimiter(
-                spec.get("rpm"), spec.get("tpm"), spec.get("rpd"), spec.get("tpd"),
+                *(spec.get(k) for k in ("rpm", "tpm", "rpd", "tpd", "otpm")),
                 state_path=self.state_dir / f"{safe}.json", sleep=self.sleep, clock=self.clock)
         return self._limiters[model]
 
@@ -142,6 +142,8 @@ class LLM:
     def _call(self, role, model, messages, tools, use_cache, json_mode, params) -> Completion:
         provider, name = model.split("/", 1)
         spec = self.cfg["models"].get(model, {})
+        if spec.get("max_output") and params.get("max_tokens", 0) > spec["max_output"]:
+            params = {**params, "max_tokens": spec["max_output"]}
         max_out = params.get("max_tokens", 1024)
         ceiling = min(spec.get("tpm") or 10**9, spec.get("context") or 10**9)
         fixed = estimate_tokens(tools or []) + max_out
@@ -163,7 +165,7 @@ class LLM:
             self.budget.check("calls")
             self.budget.check("tokens", est)
         limiter = self.limiter(model)
-        ev = limiter.acquire(est)
+        ev = limiter.acquire(est, max_out)
 
         kw = {k: v for k, v in params.items() if v is not None}  # null = unset this param
         if tools:
@@ -183,7 +185,7 @@ class LLM:
         usage = resp.usage.model_dump(include={"prompt_tokens", "completion_tokens",
                                                "total_tokens"}) if resp.usage else {}
         total = usage.get("total_tokens") or est
-        limiter.settle(ev, total)
+        limiter.settle(ev, total, usage.get("completion_tokens"))
         if self.budget:
             self.budget.charge("calls")
             self.budget.charge("tokens", total)
@@ -205,6 +207,8 @@ class LLM:
             try:
                 return client.chat.completions.create(model=name, messages=messages, **kw)
             except openai.RateLimitError as e:
+                if "Request too large" in str(e):  # TPM or OTPM admission check: never clears
+                    raise RequestTooLarge(f"{model}: {str(e)[:300]}") from e
                 wait = _retry_after(e) or 2.0 ** attempt
                 if wait > limiter.max_wait:
                     raise QuotaExhausted(f"{model}: server says retry in {wait:.0f}s") from e

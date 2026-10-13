@@ -155,3 +155,30 @@ def test_oversized_context_is_trimmed_to_fit_tpm(make_llm):
 def test_fit_clips_single_huge_message():
     out = fit([{"role": "user", "content": "y" * 100_000}], 1000)
     assert estimate_tokens(out) <= 1000 and "omitted" in out[0]["content"]
+
+
+def test_request_too_large_429_fails_fast(make_llm):
+    from consultant.llm import RequestTooLarge
+    err = {"error": {"message": "Request too large for model `m` on tokens per minute (TPM)"}}
+    srv = Server(httpx.Response(429, json=err))
+    llm, clock = make_llm(srv)
+    with pytest.raises(RequestTooLarge):
+        llm.complete("r", MSG)
+    assert clock.slept == [] and len(srv.requests) == 1
+
+
+def test_otpm_429_fails_fast_and_max_output_is_clamped(make_llm):
+    # Groq estimates a request's output from recent replies; once that estimate exceeds the
+    # OTPM cap, waiting never helps. Only a max_tokens <= cap is admitted.
+    err = {"error": {"message": "Request too large for model `m` on output tokens per minute "
+                                "(OTPM): Limit 1000, Requested 1371."}}
+    from consultant.llm import RequestTooLarge
+    llm, clock = make_llm(Server(httpx.Response(429, json=err)))
+    with pytest.raises(RequestTooLarge):
+        llm.complete("r", MSG)
+    assert clock.slept == []
+    srv = Server(chat("ok"))
+    llm, _ = make_llm(srv)
+    llm.cfg = {**CFG, "models": {**CFG["models"], "fake/m": {"max_output": 50}}}
+    llm.complete("r", MSG, max_tokens=4000)
+    assert srv.requests[0]["max_tokens"] == 50

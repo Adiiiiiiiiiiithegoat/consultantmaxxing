@@ -5,6 +5,10 @@
 # Groq free tier (per model, per org): gpt-oss-120b / gpt-oss-20b / qwen3.8-27b each
 # 30 RPM, 1K RPD, 8K TPM, 200K TPD. Each model has its own quota, so roles are spread.
 # 8K TPM also caps a single request: prompt + max_tokens must fit under it.
+# qwen3.8-27b also has an undocumented 1K output-tokens/min (OTPM) cap. Groq checks it at
+# admission against an estimate taken from recent reply lengths, so once a reply runs past 1K,
+# every later request is refused until max_tokens <= 1000. Hence max_output: 1000 (the client
+# clamps to it). Keep qwen roles to short outputs.
 # qwen3.8-27b on Groq emits no reasoning whatever reasoning_effort says, so it's set to none.
 
 providers:
@@ -25,7 +29,8 @@ providers:
 models:
   groq/openai/gpt-oss-120b: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, context: 131072}
   groq/openai/gpt-oss-20b:  {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, context: 131072}
-  groq/qwen/qwen3.8-27b:    {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, context: 131072}
+  groq/qwen/qwen3.8-27b:    {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, otpm: 1000, max_output: 1000,
+                             context: 131072}
   ollama/qwen3:4b-instruct: {context: 32768}   # non-thinking build; plain qwen3:4b always thinks
 
 # role -> model + default params. `fallback` (model + param overrides) is used when the
@@ -43,14 +48,29 @@ roles:
     fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
   analyst:
     model: groq/qwen/qwen3.8-27b
-    params: {temperature: 0.1, max_tokens: 2500, reasoning_effort: none}
+    params: {temperature: 0.1, max_tokens: 1000, reasoning_effort: none}
   partner:                       # different family from the writer (gpt-oss-120b)
     model: groq/qwen/qwen3.8-27b
-    params: {temperature: 0.3, max_tokens: 2000, reasoning_effort: none}
+    params: {temperature: 0.3, max_tokens: 1000, reasoning_effort: none}
   extractor:
     model: ollama/qwen3:4b-instruct
     params: {temperature: 0.0, max_tokens: 2000}
     fallback: {model: groq/openai/gpt-oss-20b, params: {reasoning_effort: low}}
   judge:                         # eval only; different family from the writer
     model: groq/qwen/qwen3.8-27b
-    params: {temperature: 0.0, max_tokens: 1500, reasoning_effort: none}
+    params: {temperature: 0.0, max_tokens: 1000, reasoning_effort: none}
+
+  # ---- build-time / eval-only roles ----
+  case_extractor:                # one-off casebook annotation; alternates with _alt to split quota.
+    model: groq/openai/gpt-oss-120b   # no fallback: gpt-oss-20b mislabels turns and invents
+    params: {temperature: 0.0, max_tokens: 3000, reasoning_effort: low}
+  case_extractor_alt:
+    model: groq/qwen/qwen3.8-27b
+    params: {temperature: 0.0, max_tokens: 1000, reasoning_effort: none}
+  interviewer:                   # case-mode simulator: matches questions to case data
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.0, max_tokens: 800, reasoning_effort: low}
+    fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
+  baseline:                      # plain single-model consultant; same model as the EM for fairness
+    model: groq/openai/gpt-oss-120b
+    params: {temperature: 0.3, max_tokens: 1500, reasoning_effort: medium}
