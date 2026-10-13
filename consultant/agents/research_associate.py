@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from consultant.llm import LLM
+from consultant.llm import LLM, StructuredOutputError
 from consultant.research.credibility import classify, credibility, domain
 from consultant.research.estimate import Estimate, estimate
 from consultant.research.extract import extract_facts
@@ -215,7 +215,7 @@ class ResearchAssociate:
                 try:
                     est = estimate(self.llm, self.store, self.engagement_id, question,
                                    facts_table(facts, question), self.role)
-                except BudgetExceeded:
-                    est = None  # out of budget: the brief already says what's missing
+                except (BudgetExceeded, StructuredOutputError):
+                    est = None  # out of budget or no usable plan: the brief says what's missing
         return ResearchResult(question, brief, facts, triangulate(facts), est,
                               dict(budget.spent), rejected)

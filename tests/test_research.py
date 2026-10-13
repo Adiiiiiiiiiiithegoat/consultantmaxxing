@@ -186,6 +186,20 @@ def test_safe_eval_and_quote_check():
     PageFact(claim="c", metric="m", value=None, unit="", entity="", period="", quote="q")
 
 
+
+def test_estimate_formula_assignment_and_bad_formula_is_a_validation_error():
+    # smoke-asianpaints-2 crashed on an LLM formula written as an assignment
+    from pydantic import ValidationError
+
+    from consultant.research.estimate import EstimatePlan
+    assert safe_eval("margin_fy22 = margin_fy23 - improvement_fy24",
+                     {"margin_fy23": 20, "improvement_fy24": 3}) == 17
+    f = [{"name": "a", "value": 2, "unit": "", "rationale": "r"}]
+    assert EstimatePlan(approach="top_down", factors=f, formula="a * 3", unit="").formula
+    for bad in ("a * b", "a; a", "a ="):  # unknown name, statement, not an expression
+        with pytest.raises(ValidationError):
+            EstimatePlan(approach="top_down", factors=f, formula=bad, unit="")
+
 def test_table_rows_are_aligned_to_header_years_deterministically():
     from consultant.research.extract import expand_table_fact, header_years
     assert header_years("Fiscal Year | TTM | FY 2026 | FY 2025 | FY 2024") == ["2026", "2025",
