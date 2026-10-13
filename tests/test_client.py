@@ -225,6 +225,25 @@ def test_truncated_structured_reply_asks_for_a_shorter_one(make_llm):
     assert llm.structured("r", MSG, Answer).city == "Pune"
     assert "cut off at the output-token limit" in srv.requests[1]["messages"][-1]["content"]
 
+
+def test_over_long_lists_are_trimmed_not_retried():
+    # system-train p025: Scope had 10 then 8 clarifying questions (max 5) on every retry
+    from pydantic import Field, ValidationError
+
+    from consultant.llm.client import validate_reply
+
+    class Sub(BaseModel):
+        qs: list[str] = Field(max_length=2)
+
+    class Plan(BaseModel):
+        qs: list[str] = Field(max_length=3)
+        subs: list[Sub]
+        n: int
+    p = validate_reply(Plan, '{"qs": ["a","b","c","d"], "subs": [{"qs": ["x","y","z"]}], "n": 1}')
+    assert p.qs == ["a", "b", "c"] and p.subs[0].qs == ["x", "y"]
+    with pytest.raises(ValidationError):  # other errors still go back to the model
+        validate_reply(Plan, '{"qs": ["a","b","c","d"], "subs": [], "n": "many"}')
+
 def test_blocked_model_is_refused_or_falls_back(make_llm, monkeypatch):
     from consultant.llm import ModelBlocked
     monkeypatch.setenv("CONSULTANT_BLOCK_MODELS", "fake/m")

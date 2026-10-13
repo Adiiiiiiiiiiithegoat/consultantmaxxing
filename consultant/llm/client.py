@@ -59,6 +59,30 @@ def extract_json(text: str) -> str:
     return text[start : end + 1]
 
 
+def validate_reply(schema: type[T], text: str) -> T:
+    """Parse and validate; a list over its max_length is trimmed to the first N items (models
+    often give 8 questions when asked for at most 5, and don't fix it on retry). Any other
+    error is raised for the model to correct."""
+    try:
+        data = json.loads(extract_json(text))
+    except json.JSONDecodeError:
+        return schema.model_validate_json(extract_json(text))  # raises with the parse error
+    for _ in range(5):
+        try:
+            return schema.model_validate(data)
+        except ValidationError as e:
+            long = [x for x in e.errors() if x["type"] == "too_long"]
+            if len(long) < len(e.errors()):
+                raise
+            for x in long:
+                *path, last = x["loc"]
+                node = data
+                for k in path:
+                    node = node[k]
+                node[last] = node[last][: x["ctx"]["max_length"]]
+    return schema.model_validate(data)
+
+
 def _retry_after(exc: openai.APIStatusError) -> float | None:
     try:
         return float(exc.response.headers.get("retry-after"))
@@ -168,7 +192,7 @@ class LLM:
             try:
                 c = self.complete(role, msgs, json_mode=True, **params)
                 cut = c.finish_reason == "length"
-                return schema.model_validate_json(extract_json(c.content))
+                return validate_reply(schema, c.content)
             except openai.BadRequestError as e:
                 # Groq's JSON mode rejects invalid/empty output server-side with a 400, but
                 # returns what the model wrote: often valid JSON wrapped in stray text.
@@ -181,7 +205,7 @@ class LLM:
                     "the reply was not a valid JSON object"
                 if failed:
                     try:
-                        return schema.model_validate_json(extract_json(failed))
+                        return validate_reply(schema, failed)
                     except (ValidationError, ValueError) as ve:
                         err = str(ve)[:1500]
             except (ValidationError, ValueError) as e:
