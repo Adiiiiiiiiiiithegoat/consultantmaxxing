@@ -172,12 +172,12 @@ correct within tolerance; citation verifier confirms ≥90% of stored facts; zer
 deliverable-eligible facts without a source; budget caps respected in tests.
 
 ### Phase 3 — Analysis and engagement state
-- [ ] Sandbox: subprocess with timeout, memory cap, no network, working dir per
+- [x] Sandbox: subprocess with timeout, memory cap, no network, working dir per
   engagement; all code and outputs saved
-- [ ] Analysis templates with unit tests: market sizing (top-down/bottom-up),
+- [x] Analysis templates with unit tests: market sizing (top-down/bottom-up),
   break-even, unit economics, price-volume-mix, margin bridge, scenario/sensitivity
   tables, NPV/IRR/payback
-- [ ] Engagement workspace: problem statement, issue tree, hypothesis log
+- [x] Engagement workspace: problem statement, issue tree, hypothesis log
   (open/supported/killed + evidence ids), assumptions register, decision log,
   analysis index. Serialised to disk after every step.
 

@@ -10,7 +10,7 @@ Updated by Claude Code at the end of every phase. A fresh session resumes from h
 | 0 Foundations | done | pass: 15 unit + 2 live (2 skipped: no keys) | see log 2026-10-13 |
 | 1 Knowledge + eval foundation | built; baseline eval deferred | offline green; live: extraction, spot-check, simulator, judge passed; baseline 0/15 (deferred) | DEFERRED_EVALS.md §1 |
 | 2 Research layer | built; live gate deferred | offline green (39 tests) | DEFERRED_EVALS.md §2 |
-| 3 Analysis + engagement state | not started | | |
+| 3 Analysis + engagement state | built | offline gate passed (15 tests) | no live component |
 | 4 Playbooks + retrieval | not started | | |
 | 5 Agents + engagement loop | not started | | |
 | 6 Deliverables | not started | | |
@@ -261,3 +261,27 @@ sources, over-quoted queries.
 after the latest table fixes, estimation fallback. Risks: free web sources (blocked
 government sites, wrong aggregator tables), a small local extractor, and DDG search
 quality. The keyed-search and bigger-extractor options are in the notes above.
+
+### 2026-10-13: Phase 3 Analysis + engagement state (built; gate is fully offline and passed)
+- `analysis/sandbox.py`: runs code in `python -I` in its own working directory
+  (`engagements/<id>/analyses/NNN_name/`), saving code.py, stdout, stderr, result.json and
+  run.json. Analysis code assigns `RESULT = {...}`. The network is blocked by a socket patch;
+  timeout and memory cap come from a psutil watchdog over the **whole process tree**. On
+  Windows the venv python.exe is a launcher, so the real interpreter is a child: measuring
+  only the launcher missed a 400MB allocation; fixed and covered by a test. Committed
+  private bytes count, since untouched zero pages aren't in RSS. Not a security boundary:
+  use a container for adversarial code.
+- `analysis/templates.py`: top-down / bottom-up sizing, break-even (units, revenue), unit
+  economics (LTV, LTV/CAC, payback), price-volume-mix and margin bridge (both reconcile to
+  zero), one-way sensitivity, scenario table, two-way grid, NPV, IRR (bisection), payback,
+  CAGR, PV from CAGR. Known-answer tests are hand-checked (e.g. IRR of [-100, 60, 60] =
+  13.066% from the quadratic).
+- `workspace/`: `WorkspaceState` (problem, scope, case type, issue tree, hypothesis log
+  with status + evidence fact ids + analysis ids, decision log, analysis index, open
+  questions, deliverables, steps_done, step outputs). Atomic JSON save after every
+  mutation; `facts.sqlite` (fact store + assumptions register) lives alongside.
+  `ws.step(name, fn)` runs once and returns the saved output on resume.
+- **Gate (offline):** templates pass known-answer tests; the sandbox blocks network
+  (urllib + raw socket), times out a runaway loop, enforces the memory cap and leaves no
+  orphan process; kill-and-resume: a subprocess hard-kills itself (`os._exit`) after
+  step 2, the resume runs only steps 3–4, and step outputs survive.
