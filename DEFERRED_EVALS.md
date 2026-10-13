@@ -69,3 +69,13 @@ Gate ran offline (validator, live formulas, action titles). Deferred live check:
 
 If 7.6 fails: fix the weakest layer using 7.2 (train cases), re-run 7.4 at most 3 times, then
 escalate. Cost and time: see the token estimate in PROGRESS.md (Phase 5).
+
+## 7. Phase 8: interface + hardening
+| # | Check | Command | Pass criterion |
+|---|---|---|---|
+| 8.1 | Fresh clone → `consult new` completes a dev-profile engagement following the README | clone, `uv sync`, `cp .env.example .env` (add key), then `uv run consult new "<question>" --auto --profile dev` | deliverables written, `validation.json` passed |
+| 8.2 | UI renders a live run | `uv run consult ui` while 8.1 runs | tree/hypotheses/facts update live (AppTest version passes offline) |
+
+Partial on 2026-10-13: run 1 reached the partner review (bugs found and fixed); run 2 hit
+the daily quota. Finish it with
+`cd D:/Projects/consultantmaxxing-smoke && CONSULTANT_MODELS_FILE=models.small.yaml uv run consult resume smoke-asianpaints-2`.

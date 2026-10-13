@@ -251,12 +251,12 @@ rubric dimensions; report written. If not, iterate on the weakest layer (max 3
 iterations), re-running the eval each time, before escalating to the user.
 
 ### Phase 8 — Interface and hardening
-- [ ] CLI (`typer`): `consult new`, `consult resume`, `consult eval`, `consult report`
-- [ ] Streamlit UI: live issue tree, hypothesis status, facts as they arrive, budget
+- [x] CLI (`typer`): `consult new`, `consult resume`, `consult eval`, `consult report`
+- [x] Streamlit UI: live issue tree, hypothesis status, facts as they arrive, budget
   usage, deliverable downloads
-- [ ] Guardrails: budgets, no-network sandbox, citation requirement enforced at
+- [x] Guardrails: budgets, no-network sandbox, citation requirement enforced at
   deliverable time, confidence labels, graceful stop on quota exhaustion
-- [ ] README: setup, keys, profiles, how to run, how to swap models
+- [x] README: setup, keys, profiles, how to run, how to swap models
 
 **Gate:** fresh clone → setup → `consult new` completes a dev-profile engagement
 following only the README; UI renders a live run; full test suite green.

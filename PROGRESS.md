@@ -15,7 +15,7 @@ Updated by Claude Code at the end of every phase. A fresh session resumes from h
 | 5 Agents + engagement loop | built; live gate deferred | offline green (74 tests); 1 smoke call OK | DEFERRED_EVALS.md §5 |
 | 6 Deliverables | built | offline gate passed (83 tests total); 2 smoke calls | live analyst retry path untested |
 | 7 Full evaluation | tooling built; evals deferred | offline green (88 tests) | DEFERRED_EVALS.md §6 |
-| 8 Interface + hardening | not started | | |
+| 8 Interface + hardening | built | offline green (95 tests); fresh-clone setup OK; live smoke partial | see final summary |
 
 ## Blockers
 
@@ -435,3 +435,93 @@ Options:
   backtest runner skips unverified and scores when included.
 - Untested live: everything in this phase. No smoke call needed (the judge already ran
   live in Phase 1).
+
+### 2026-10-13: Phase 8 Interface + hardening (built)
+- `consultant/cli.py` (`uv run consult ...`): `new` (real mode, interactive checkpoints after
+  scoping and hypotheses, `--auto` to skip), `resume`, `list`, `eval
+  system|baseline|facts|partner|backtests|retrieval|tokens`, `report`, `knowledge build`,
+  `ui`. Quota exhaustion and blocked models stop cleanly with the exact resume command.
+- `consultant/ui/app.py` (Streamlit, `consult ui`): live-refreshing view (5s) of steps,
+  tokens/calls vs profile caps, issue tree, hypothesis status, facts as they arrive (with
+  source, credibility, verified), analyses, open questions, decision log, deliverable
+  downloads, memo inline; a sidebar form starts `consult new --auto` in the background.
+- README rewritten: setup, keys, profiles, running, swapping models (role mapping,
+  `CONSULTANT_MODELS_FILE`), guardrails, private knowledge base, deferred evals, development.
+- Guardrails: budgets with a synthesis reserve; no-network sandbox; citations required and
+  verified; number-traceability validator; confidence labels; graceful quota stop; 120b
+  block via `CONSULTANT_BLOCK_MODELS`.
+- Bug found by an offline test: `Workspace.create(root=ENGAGEMENTS)` bound its default at
+  import time, so overrides were ignored and a test wrote to the real `engagements/`.
+  Roots now resolve at call time; the stray folder was deleted.
+- **Offline gate:** UI renders a finished engagement, an in-progress one and the empty
+  state (Streamlit AppTest); CLI `list` + graceful quota stop; full suite green (95 passed).
+- **Fresh clone** (git clone, uv sync, .env from .env.example, uv run pytest): no private
+  data came across; 89 passed, 3 skipped (the 3 that need the private casebook).
+
+### 2026-10-13: final end-to-end smoke (dev profile, small-model plan, fresh clone)
+Command: `CONSULTANT_MODELS_FILE=models.small.yaml uv run consult new "Why did Asian Paints'
+profit margin change in FY2023-24, and what should management focus on next?" --auto
+--profile dev` (all roles gpt-oss-20b; extractor local qwen3:4b-instruct; 120b blocked).
+
+**Run 1** went through scope → plan → research → verification → draft → partner review x2
+(30 gpt-oss-20b calls, 33.5K tokens; 19 local extractor calls), then crashed at the
+synthesis budget. Findings, all fixed with offline tests (commit 9f359c5):
+1. **Research questions lost the client's name.** The plan wrote generic questions
+   ("company name raw material price increase...") and the scope wasn't passed to the
+   Research Associates, so 9 searches / 18 pages produced **zero facts**. Fixed: engagement
+   context goes to every research question; plan questions must name entity, metric and
+   period.
+2. With no facts, two hypotheses were marked "supported" on estimates alone. Fixed in
+   code: only facts/analyses can support or kill a hypothesis; otherwise needs_more.
+3. It assumed the margin *fell* (the client only said "changed"). Fixed in the plan
+   prompt: establish the direction/size of a change before explaining it.
+4. The analyst returned an empty RESULT and it was accepted. Fixed: empty = failure.
+5. **Synthesis BudgetExceeded crashed the run** (draft + review + revision > the 18K
+   synthesis reserve on dev). Fixed: the latest draft is delivered, unresolved partner
+   issues are listed in the memo, and there's a deterministic fallback draft if none fits.
+What worked live: scoping and classification, tree and hypotheses, search/fetch (with
+403/429/robots handling), local extraction, citation verification, the analyst sandbox,
+the validator catching an untraceable "25" and a topic-only slide title, and partner
+reviews.
+
+**Run 2 (after fixes)** stopped at the first call: gpt-oss-20b's daily quota was exhausted
+(earlier runs today). The graceful stop worked as designed. It can be finished with
+`cd D:/Projects/consultantmaxxing-smoke && CONSULTANT_MODELS_FILE=models.small.yaml uv run
+consult resume smoke-asianpaints-2` once the quota refills. A full engagement on the free
+tier needs ~35-60K tokens on one model, i.e. most of a day's quota.
+
+## Final summary (build-only mode)
+
+**Works and is tested offline (95 tests):** provider layer (Groq/Ollama, Anthropic/OpenAI
+by config), rate limiter (per-minute windows + refilling daily buckets, OTPM, model
+blocklist), cache, structured output with repair, tracing and budgets; casebook
+segmentation/extraction (58 cases, speaker-labelled), simulator, judge, baseline; research
+layer (search, polite fetch, verbatim-quote facts, table alignment, triangulation,
+verification, estimation, research associate with caps); sandbox and analysis templates;
+resumable workspace; playbooks and BM25 retrieval (gate passed offline: leakage, 95.5%
+retrieval, originality); full engagement loop in case and real mode; deliverables with a
+live-formula spreadsheet and number-traceability validator; CLI, dashboard, README.
+
+**Verified live (small calls, Groq free tier):** provider smoke, simulator gate, judge gate,
+case extraction, Scope schema, analyst + formulas, and most of one real-mode engagement
+(see the smoke above).
+
+**Untested live:** fact-finding accuracy after the latest research fixes; partner
+discrimination; any complete engagement with deliverables from a real model; system vs
+baseline; backtests (outcomes unverified); token actuals.
+
+**To run the deferred evals** (full order and pass criteria in DEFERRED_EVALS.md):
+```
+# 0. paid key in .env; point roles at it in config/models.yaml; remove CONSULTANT_BLOCK_MODELS
+uv run pytest && uv run pytest -m live tests/test_live.py
+uv run pytest -m live tests/test_simulator.py tests/test_judge.py       # 1.1, 1.2
+uv run consult eval baseline                                            # 1.3
+uv run consult eval facts --dev && uv run consult eval facts            # 2.x
+uv run consult eval system --split train --n 3 --name system-train      # 5.1
+uv run consult eval partner                                             # 5.2
+uv run python -m consultant.evals.run_system real "Why did Asian Paints' margins change in FY24?"   # 5.3
+uv run consult eval tokens --traces eval-system-train                   # 5.4
+# 7.x: verify backtests.yaml outcomes; iterate on --split train --n 5; then once:
+uv run consult eval system --split test --name system-test
+uv run consult eval backtests && uv run consult report                  # EVAL_REPORT.md
+```
