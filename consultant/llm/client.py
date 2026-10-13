@@ -168,16 +168,26 @@ class LLM:
                 c = self.complete(role, msgs, json_mode=True, **params)
                 return schema.model_validate_json(extract_json(c.content))
             except openai.BadRequestError as e:
-                # Groq's JSON mode rejects invalid/empty output server-side with a 400
+                # Groq's JSON mode rejects invalid/empty output server-side with a 400, but
+                # returns what the model wrote: often valid JSON wrapped in stray text.
                 if "json_validate_failed" not in str(e):
                     raise
-                reply, err = "(invalid or empty JSON)", "the reply was not a valid JSON object"
+                body = e.body if isinstance(e.body, dict) else {}  # SDKs differ on nesting
+                failed = body.get("failed_generation") or \
+                    (body.get("error") or {}).get("failed_generation")
+                reply, err = failed or "(invalid or empty JSON)", \
+                    "the reply was not a valid JSON object"
+                if failed:
+                    try:
+                        return schema.model_validate_json(extract_json(failed))
+                    except (ValidationError, ValueError) as ve:
+                        err = str(ve)[:1500]
             except (ValidationError, ValueError) as e:
                 reply, err = c.content or "(empty reply)", str(e)[:1500]
             self._trace("schema_retry", role=role, attempt=attempt, error=err)
-            msgs += [{"role": "assistant", "content": reply},
+            msgs += [{"role": "assistant", "content": reply[:6000]},
                      {"role": "user", "content": f"That reply failed validation:\n{err}\n"
-                      "Return the corrected JSON object only, keeping it brief."}]
+                      "Return the corrected JSON object only, with every required field."}]
         raise StructuredOutputError(f"{role}: no valid {schema.__name__} after {retries + 1} tries")
 
     # ---- one model call ----------------------------------------------------------------
