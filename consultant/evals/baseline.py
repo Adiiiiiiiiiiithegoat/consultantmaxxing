@@ -5,6 +5,7 @@ Usage: uv run python -m consultant.evals.baseline [n_cases]
 """
 
 import json
+import subprocess
 import sys
 from typing import Literal
 
@@ -29,6 +30,15 @@ BASELINE_SYS = (
     "and continue. 'final_answer': END the case with your answer to the original problem: "
     "the recommendation first, then the supporting analysis and next steps. You have a "
     "limited number of questions.")
+
+
+def code_version() -> str:
+    """Commit the results were produced with; '-dirty' if tracked files differ from it."""
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True,
+                              check=False).stdout.strip()
+    head = git("rev-parse", "HEAD") or "unknown"
+    return head + ("-dirty" if git("status", "--porcelain", "--untracked-files=no") else "")
 
 
 class Turn(BaseModel):
@@ -73,6 +83,7 @@ def run(split: str = "test", limit: int | None = None, name: str = "baseline") -
             print(f"quota exhausted at {case.id}: {e}; rerun later to resume", flush=True)
             break
         path.write_text(json.dumps({"case_id": case.id, "case_type": case.case_type,
+                                    "code_version": code_version(),
                                     "submission": sub.model_dump(),
                                     "verdict": verdict.model_dump(),
                                     "scores": verdict.scores(), "overall": verdict.overall()},
@@ -81,6 +92,7 @@ def run(split: str = "test", limit: int | None = None, name: str = "baseline") -
     rows = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(out_dir.glob("*.json"))]
     summary = {
         "name": name, "split": split, "cases_done": len(rows), "cases_total": len(cases),
+        "code_versions": sorted({r.get("code_version", "unknown") for r in rows}),
         "overall": sum(r["overall"] for r in rows) / len(rows) if rows else None,
         "by_dimension": {k: sum(r["scores"][k] for r in rows) / len(rows) for k in RUBRIC}
         if rows else {},
