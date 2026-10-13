@@ -8,6 +8,7 @@ engagements/<id>/
   deliverables/    memo, storyline, model.xlsx, appendix
 """
 
+import os
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -21,7 +22,7 @@ from consultant.config import ROOT
 from consultant.llm.cache import atomic_write
 from consultant.research.fact_store import FactStore
 
-ENGAGEMENTS = ROOT / "engagements"
+ENGAGEMENTS = Path(os.environ.get("CONSULTANT_ENGAGEMENTS") or ROOT / "engagements")
 
 
 def now() -> str:
@@ -99,19 +100,22 @@ class Workspace:
 
     # ---- persistence ------------------------------------------------------------------
     @classmethod
-    def create(cls, engagement_id: str, root: Path = ENGAGEMENTS, **fields) -> "Workspace":
+    def create(cls, engagement_id: str, root: Path | None = None, **fields) -> "Workspace":
+        root = root or ENGAGEMENTS  # resolved at call time (overridable for tests/UI)
         ws = cls(WorkspaceState(engagement_id=engagement_id, **fields), root)
         ws.save()
         return ws
 
     @classmethod
-    def load(cls, engagement_id: str, root: Path = ENGAGEMENTS) -> "Workspace":
+    def load(cls, engagement_id: str, root: Path | None = None) -> "Workspace":
+        root = root or ENGAGEMENTS
         path = root / engagement_id / "workspace.json"
         return cls(WorkspaceState.model_validate_json(path.read_text(encoding="utf-8")), root)
 
     @classmethod
-    def open(cls, engagement_id: str, root: Path = ENGAGEMENTS, **fields) -> "Workspace":
+    def open(cls, engagement_id: str, root: Path | None = None, **fields) -> "Workspace":
         """Load if it exists (resume), else create."""
+        root = root or ENGAGEMENTS
         if (root / engagement_id / "workspace.json").exists():
             return cls.load(engagement_id, root)
         return cls.create(engagement_id, root, **fields)
