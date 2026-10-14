@@ -296,3 +296,35 @@ def test_extractor_sees_collapsed_empty_cells_and_survives_a_bad_chunk():
     facts, rejected = extract_facts(llm, page, "Tata Motors revenue FY24")
     assert "|  |" not in llm.seen[0] and facts and facts[0].value == 437928 and not rejected
     assert extract_facts(FakeLLM(fail=True), page, "q") == ([], 0)
+
+
+def test_facts_table_shows_quote_and_source_title():
+    # fact-finding: the brief picked a quarterly "Revenue at Rs 61,237 cr" for a full-year
+    # question and a balance-sheet total labelled as profit; it only saw the extractor's claim
+    from consultant.agents.research_associate import facts_table
+    f = Fact(id=16, engagement_id="e", source_url="https://smestreet.in/x",
+             source_title="TCS Q4 FY24 results", claim="TCS revenue FY2023-24 was 61,237 cr",
+             metric="revenue", value=61237, unit="cr", entity="TCS", period="FY 2023-24",
+             quote="Revenue at ₹61,237 cr,\n +3.5% YoY", source_type="press", credibility=3)
+    row = facts_table([f], "TCS revenue FY2023-24")
+    assert '"TCS Q4 FY24 results"' in row and 'quote: "Revenue at ₹61,237 cr, +3.5% YoY"' in row
+
+
+def test_duplicated_year_columns_and_headerless_rows():
+    # fact-finding infosys: "Mar 2024 | Apr 2024" columns repeat each value, and a row with no
+    # verified header had its FY26 cell labelled FY2023-24 by the extractor
+    from consultant.research.extract import expand_table_fact
+    row = PageFact(claim="c", metric="revenue", value=178650, unit="crore", entity="I",
+                   period="Apr 2026",
+                   quote="Revenue | 1,46,767 | 1,46,767 | 1,53,670 | 1,53,670",
+                   header="Line item | Mar 2023 | Apr 2023 | Mar 2024 | Apr 2024")
+    assert {g.period: g.value for g in expand_table_fact(row)} == {"2023": 146767,
+                                                                   "2024": 153670}
+    mixed = row.model_copy(update={"quote": "Revenue | 37,923 | 36,000 | 1,53,670 | 1,46,767",
+                                   "header": "| Q4 2024 | Q4 2023 | FY 2024 | FY 2023 |"})
+    assert expand_table_fact(mixed) == [mixed]          # quarter and year share a year
+    bare = row.model_copy(update={"quote": "Net Profit | 26,233 | 26,713 | 29,440",
+                                  "header": "", "period": "FY2023-24"})
+    assert expand_table_fact(bare)[0].period == ""     # unverifiable column pick
+    single = row.model_copy(update={"quote": "Net profit | 26,233", "header": ""})
+    assert expand_table_fact(single) == [single]        # one value: nothing to mix up

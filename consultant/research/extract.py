@@ -182,19 +182,26 @@ def find_header(text: str, quote: str) -> str:
 def expand_table_fact(f: PageFact) -> list[PageFact]:
     """A multi-year table row + its verified header -> one fact per year, aligned by position
     from the right (leading extra cells are TTM/latest columns). Small models often pick the
-    wrong column; this removes that choice. No expansion if the counts don't line up."""
-    if not (is_table_like(f.quote) and is_table_like(f.header, 1)) or \
-            norm(f.header) == norm(f.quote):
+    wrong column; this removes that choice. No expansion if the counts don't line up.
+    A multi-value row whose header can't be verified keeps no period: the model's column
+    pick is a guess (it labelled an FY26 cell FY2023-24)."""
+    values = numbers_in(re.sub(r"\((?:[ivxl+\s]+)\)", " ", f.quote, flags=re.I))  # drop (I+II)
+    unverified = not f.header or norm(f.header) == norm(f.quote)
+    if is_table_like(f.quote) and len(values) >= 2 and unverified:
+        return [f.model_copy(update={"period": ""})]
+    if not (is_table_like(f.quote) and is_table_like(f.header, 1)) or unverified:
         return [f]
     years = header_years(f.header)
-    values = numbers_in(re.sub(r"\((?:[ivxl+\s]+)\)", " ", f.quote, flags=re.I))  # drop (I+II)
-    if len(years) < 2 or len(set(years)) != len(years) or \
-            not 0 <= len(values) - len(years) <= 1:  # at most one extra (TTM) cell
+    if len(years) < 2 or not 0 <= len(values) - len(years) <= 1:  # at most one extra (TTM)
         return [f]
-    pairs = zip(years, values[-len(years):], strict=True)
+    by_year: dict[str, set[float]] = {}
+    for y, v in zip(years, values[-len(years):], strict=True):
+        by_year.setdefault(y, set()).add(v)
+    if any(len(vs) > 1 for vs in by_year.values()):  # e.g. quarter and year columns
+        return [f]                                   # share a year: ambiguous, don't guess
     return [f.model_copy(update={"value": v, "period": y,
                                  "claim": f"{f.metric} for {y}: {v} {f.unit} ({f.entity})"})
-            for y, v in pairs]
+            for y, (v,) in by_year.items()]
 
 
 def extract_facts(llm: LLM, page: Page, question: str,
