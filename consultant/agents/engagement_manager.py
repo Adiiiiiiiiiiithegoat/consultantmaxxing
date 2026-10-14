@@ -142,6 +142,16 @@ def fallback_draft(ws: Workspace) -> storyliner.Draft:
         key_evidence=refs[:3], would_change=change)
 
 
+def best_reviewed(reviewed: list[tuple[storyliner.Draft, "partner.Review"]]) -> int:
+    """Index of the draft to ship: fewest blocking issues, then fewest critical ones, then
+    the later draft (it has absorbed more review). The last draft used to ship, even when its
+    own review found it worse than an earlier one."""
+    def key(i: int):
+        blocking = reviewed[i][1].blocking()
+        return len(blocking), sum(b.severity == "critical" for b in blocking), -i
+    return min(range(len(reviewed)), key=key)
+
+
 def evidence_text(ws: Workspace, verified_only: bool = False, limit: int = 60) -> str:
     """Compact evidence list shared by the EM, storyliner and partner (context management:
     ids and short claims, not raw pages)."""
@@ -425,27 +435,33 @@ class Engagement:
         self.synthesis.limits["tokens"] = max(self.synthesis.limits["tokens"],
                                               self.prof["max_tokens"]
                                               - st.notes["investigate_tokens"])
+        reviewed: list[tuple[storyliner.Draft, partner.Review]] = []
         with self.llm.scoped(self.synthesis):
             try:
                 draft = storyliner.Draft(**ws.step(
                     "story0", lambda: storyliner.write(self.llm, self._brief()).model_dump()))
                 for r in range(MAX_REVIEW_ROUNDS):
                     rv = partner.Review(**ws.step(f"review{r}", lambda d=draft: self._review(d)))
+                    reviewed.append((draft, rv))
                     if rv.verdict == "approve" or r == MAX_REVIEW_ROUNDS - 1:
                         break
                     draft = storyliner.Draft(**ws.step(
-                        f"story{r + 1}", lambda rv=rv: storyliner.write(
-                            self.llm, self._brief(), partner.format_review(rv)).model_dump()))
-                    rv = None  # the new draft hasn't been reviewed yet
+                        f"story{r + 1}", lambda rv=rv, d=draft: storyliner.write(
+                            self.llm, self._brief(), partner.format_review(rv),
+                            previous=d).model_dump()))
             except BudgetExceeded as e:
                 stopped = stopped or str(e)
                 ws.decide("system", "synthesis stopped: budget cap", str(e))
-                st.open_questions.append("Synthesis stopped at the budget cap: the latest draft "
-                                         "was delivered without a further review round.")
-        if draft is None:
+                st.open_questions.append("Synthesis stopped at the budget cap: the best-reviewed "
+                                         "draft was delivered without a further review round.")
+        if reviewed:  # ship the reviewed draft with the fewest blocking issues, not the last
+            k = best_reviewed(reviewed)
+            draft, rv = reviewed[k]
+            st.notes["shipped_draft"] = f"story{k}"
+            if rv.verdict != "approve":
+                st.notes["unresolved_review"] = [i.model_dump() for i in rv.blocking()]
+        elif draft is None:
             draft = fallback_draft(ws)
-        if rv is not None and rv.verdict != "approve":
-            st.notes["unresolved_review"] = [i.model_dump() for i in rv.blocking()]
         with self.llm.scoped(self.synthesis):
             draft = storyliner.Draft(**ws.step("repair", lambda: self._repair(draft)))
         ws.save()

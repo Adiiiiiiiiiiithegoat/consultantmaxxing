@@ -551,3 +551,59 @@ def test_client_reply_reaches_the_brief_in_full_and_once(tmp_path):
     for text in (evidence_text(ws, verified_only=True), eng._brief()):
         assert LONG_REPLY in text and "job for life" in text
     assert case.problem_statement in eng._brief()       # the problem as the client put it
+
+
+def test_p033_ships_the_best_reviewed_draft_and_revisions_see_the_previous_one(tmp_path):
+    # regression (p033, contents synthetic): drafts 0 and 1 recommended option A; the partner's
+    # counterarguments flipped draft 2 to option B, whose review found a critical flaw, and
+    # with no rounds left the flipped last draft shipped. Now the reviewed draft with the
+    # fewest blocking issues ships, and each revision is written from the previous draft.
+    def issue(sev="major"):
+        return {"kind": "unsupported_claim", "severity": sev, "where": "x", "detail": "d"}
+    blocking = [[issue()] * 6, [issue()] * 3, [issue("critical")] + [issue()] * 5]
+    answers = ["Option A, outsource the excess.", "Option A, outsource the excess.",
+               "Option B, buy the software."]
+
+    class Flip(ScriptedLLM):
+        stories = 0
+        story_inputs: list[str] = []
+
+        def StoryDraft(self, user):
+            self.story_inputs.append(user)
+            d = super().StoryDraft(user)
+            d["answer"] = answers[self.stories]
+            self.stories += 1
+            return d
+
+        def Review(self, user):
+            self.reviews += 1
+            return {"issues": blocking[self.reviews - 1], "strongest_counterargument": "B",
+                    "ceo_questions": ["a", "b", "c"], "agrees_with_client_prior": False,
+                    "prior_agreement_justified": False, "verdict": "revise"}
+    llm = Flip()
+    eng, ws, _ = engagement(tmp_path, llm)
+    out = eng.run()
+    assert llm.reviews == 3 and ws.state.notes["shipped_draft"] == "story1"
+    assert out["draft"].answer == answers[1]                     # not the flipped last draft
+    unresolved = ws.state.notes["unresolved_review"]
+    assert len(unresolved) == 3 and all(i["severity"] == "major" for i in unresolved)
+    assert "YOUR PREVIOUS DRAFT" not in llm.story_inputs[0]
+    assert answers[0] in llm.story_inputs[1] and answers[1] in llm.story_inputs[2]
+    assert all("Keep its recommendation unless a BLOCKING issue" in s
+               for s in llm.story_inputs[1:])
+
+
+def test_best_reviewed_prefers_fewer_blocking_then_fewer_critical_then_later():
+    from consultant.agents.engagement_manager import best_reviewed
+    from consultant.agents.partner import Issue
+
+    def rv(*sevs):
+        return Review(issues=[Issue(kind="maths", severity=s, where="", detail="")
+                              for s in sevs], strongest_counterargument="", ceo_questions=[],
+                      agrees_with_client_prior=False, prior_agreement_justified=True,
+                      verdict="revise")
+    d = None
+    assert best_reviewed([(d, rv("major", "major")), (d, rv("major"))]) == 1
+    assert best_reviewed([(d, rv("major")), (d, rv("critical"))]) == 0
+    assert best_reviewed([(d, rv("major")), (d, rv("major"))]) == 1
+    assert best_reviewed([(d, rv("minor", "minor")), (d, rv("major"))]) == 0  # minor: comment

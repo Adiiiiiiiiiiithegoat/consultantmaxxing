@@ -62,10 +62,22 @@ STORY_SYS = (
     "isn't in the evidence, don't state it.\n\nHOUSE STYLE:\n")
 
 
-def write(llm, brief: str, review: str = "", role: str = "storyliner") -> Draft:
+REVISE = (
+    "Revise your previous draft; don't start over. Keep its recommendation unless a BLOCKING "
+    "issue shows the evidence contradicts it (then change it and say why in the confidence "
+    "reason). Fix every blocking issue. Comments, the counterargument and the CEO questions "
+    "are input to weigh, not orders: a counterargument alone never flips the answer.")
+
+
+def write(llm, brief: str, review: str = "", role: str = "storyliner",
+          previous: Draft | None = None) -> Draft:
+    """A first draft from the brief, or (with `review`) a revision of `previous`: written from
+    scratch each round, drafts flipped back and forth with the partner's counterarguments."""
     system = STORY_SYS + playbooks.load("deliverables")
-    user = brief if not review else (f"{brief}\n\nPARTNER REVIEW OF YOUR PREVIOUS DRAFT — "
-                                     f"fix every major/critical issue:\n{review}")
+    user = brief
+    if review:
+        prev = f"YOUR PREVIOUS DRAFT:\n{render_text(previous)}\n\n" if previous else ""
+        user = f"{brief}\n\n{prev}PARTNER REVIEW OF YOUR PREVIOUS DRAFT:\n{review}\n\n{REVISE}"
     return llm.structured(role, [{"role": "system", "content": system},
                                  {"role": "user", "content": user}], StoryDraft)
 
