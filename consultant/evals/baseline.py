@@ -18,7 +18,7 @@ from consultant.knowledge.extract import load_cases
 from consultant.knowledge.schema import Case
 from consultant.llm import LLM, QuotaExhausted
 from consultant.llm.context import clip
-from consultant.tracing import Tracer
+from consultant.tracing import Budget, Tracer
 
 RESULTS = ROOT / "eval_results"
 MAX_QUESTIONS = 8
@@ -47,6 +47,13 @@ class Turn(BaseModel):
 
 
 def run_case(llm: LLM, case: Case, role: str = "baseline") -> Submission:
+    with llm.scoped(spent := Budget()):  # no caps: counts tokens for the efficiency report
+        sub = _run_case(llm, case, role)
+    sub.tokens = spent.spent["tokens"]
+    return sub
+
+
+def _run_case(llm: LLM, case: Case, role: str) -> Submission:
     iv = Interviewer(case, llm)
     transcript = [{"role": "interviewer", "content": iv.opening()}]
     final = ""

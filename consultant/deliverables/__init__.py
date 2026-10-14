@@ -33,7 +33,12 @@ def memo_md(ws, d: Draft, issues: list[dict]) -> str:
                    "evidence and must not be relied on:\n" +
                    _bullets(f"{i['where']}: {i['detail']}" for i in issues))
     return (f"# {st.scope.get('restated_question') or st.problem_statement}\n\n"
-            f"## Answer\n{d.answer}\n\n*Confidence: {d.confidence}*\n\n## Why\n{args}\n\n"
+            f"## Answer\n**Recommendation:** {d.answer}\n\n**Confidence: {d.confidence}.** "
+            f"{d.confidence_reason}\n\n"
+            + (f"**Rests on:** {', '.join(d.key_evidence)}\n\n" if d.key_evidence else "")
+            + (f"**What would change this:**\n{_bullets(d.would_change)}\n\n"
+               if d.would_change else "")
+            + f"## Why\n{args}\n\n"
             f"## Risks\n{_bullets(d.risks)}\n\n## Next steps\n{_bullets(d.next_steps)}\n\n"
             f"## Open questions\n{_bullets(d.open_questions + st.open_questions)}\n\n"
             f"*Evidence ids: F = sourced fact (see sources.md), A = analysis (see model.xlsx), "

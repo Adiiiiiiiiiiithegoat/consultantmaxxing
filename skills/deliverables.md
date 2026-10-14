@@ -5,6 +5,22 @@ Lead with the answer to the client's question, then 3–5 supporting arguments, 
 by evidence below it. A reader who stops after the first paragraph should know what to do
 and why.
 
+## Always commit to a best answer
+The client is paying for a recommendation, so give one even when the evidence is thin, and
+let the confidence level carry the uncertainty. The opening block is, in order:
+1. **Recommendation:** what the client should do, in 2–4 sentences.
+2. **Confidence (high / medium / low) and why:** how strong the evidence is and what is
+   missing. Thin evidence lowers the confidence; it does not remove the recommendation.
+3. **What it rests on:** the 2–3 pieces of evidence (fact, analysis or assumption ids)
+   that carry the answer.
+4. **What would change it:** the findings that would flip or soften the recommendation.
+5. **Next steps:** including the data still to collect, and what each piece would settle.
+
+"Collect more data before deciding" is never the recommendation. It is a next step that
+follows a committed recommendation ("Do X; confirm with Y before full roll-out").
+Committing means reasoning from the evidence you have: the number rules below still apply
+in full, so a recommendation with a missing figure says so in words instead of inventing it.
+
 ## Action titles
 Every slide or section title states the insight, not the topic: "Dealer incentives, not
 price, explain the share loss" rather than "Market share analysis". A good title names a

@@ -24,7 +24,10 @@ REPAIR_SYS = (
     "from (it must appear there exactly AND that evidence must be for the same entity, metric "
     "and period the sentence states: a figure for another quarter or year is not support), "
     "or rewrite the sentence without that number. When unsure, remove the number. Change "
-    "nothing else; never add a new number that is not in the evidence.")
+    "nothing else; never add a new number that is not in the evidence. If the problem is "
+    "that the answer defers the decision, rewrite the answer as a committed recommendation "
+    "drawn from the evidence (say what it depends on); collecting data belongs in the next "
+    "steps, not in the answer.")
 
 
 class Fix(BaseModel):
@@ -50,6 +53,10 @@ def _get(d: Draft, where: str) -> dict:
     kind, _, n = where.partition(" ")
     if where == "answer":
         return {"text": d.answer}
+    if where == "confidence reason":
+        return {"text": d.confidence_reason}
+    if where == "would change":
+        return {"items": d.would_change}
     if kind == "argument":
         a = d.arguments[int(n) - 1]
         return {"title": a.title, "text": a.text, "refs": a.refs}
@@ -69,6 +76,10 @@ def _set(d: Draft, where: str, c: dict) -> Draft:
     kind, _, n = where.partition(" ")
     if where == "answer":
         d.answer = new["text"]
+    elif where == "confidence reason":
+        d.confidence_reason = new["text"]
+    elif where == "would change":
+        d.would_change = new["items"]
     elif kind == "argument":
         d.arguments[int(n) - 1] = d.arguments[int(n) - 1].model_copy(update=new)
     elif kind == "slide":
@@ -94,8 +105,11 @@ def _strip_location(d: Draft, where: str, numbers: list[str]) -> Draft:
     return _set(d, where, out)
 
 
+NUMBER_FLAGS = ("unsupported_number", "period_mismatch")  # a number shipped as fact
+
+
 def _flags(ws, d: Draft) -> list[dict]:
-    return [i for i in validate_draft(ws, d) if i["kind"] == "unsupported_number"]
+    return [i for i in validate_draft(ws, d) if i["kind"] in (*NUMBER_FLAGS, "deferred_answer")]
 
 
 def repair(llm, ws, d: Draft, evidence: str, role: str = "storyliner") -> tuple[Draft, list[str]]:
@@ -120,8 +134,10 @@ def repair(llm, ws, d: Draft, evidence: str, role: str = "storyliner") -> tuple[
     except (BudgetExceeded, StructuredOutputError):
         pass  # no budget or no usable fix: fall through to removal
     removed = []
-    for f in _flags(ws, d):
+    for f in [f for f in _flags(ws, d) if f["kind"] in NUMBER_FLAGS]:
         numbers = list(dict.fromkeys(f["numbers"]))
         d = _strip_location(d, f["where"], numbers)
-        removed += [f"{n} in {f['where']} (not in the evidence it cites)" for n in numbers]
+        why = ("cited evidence is for another period" if f["kind"] == "period_mismatch"
+               else "not in the evidence it cites")
+        removed += [f"{n} in {f['where']} ({why})" for n in numbers]
     return d, removed

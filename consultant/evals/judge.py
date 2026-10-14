@@ -1,14 +1,16 @@
 """Rubric judge: scores a submission against the case's reference solution, 1-5 per dimension.
 
 What each dimension is judged on (the same for the system and the baseline):
-- PROCESS dimensions (scoping, structure, hypotheses, maths, evidence, efficiency) are judged
+- PROCESS dimensions (scoping, structure, hypotheses, maths, evidence) are judged by the LLM
   on everything the candidate visibly did: the interview transcript plus its work record (for
   the system: the workspace's issue tree, hypotheses with status and evidence, analyses with
   results, and a fact summary; the baseline keeps no workspace, so its transcript is its whole
   work record).
 - OUTCOME dimensions (key_insight, recommendation, communication) are judged on the final
   answer alone, so a long or well-documented process can't lift the answer's score.
-Two judge calls per submission, one per group; the Verdict combines them."""
+- MEASURED: efficiency is computed from the transcript, not judged (see efficiency()): both
+  system and baseline used to score 1 with only a raw question count to go on.
+Two judge calls per submission, one per LLM group; the Verdict combines them."""
 
 from pydantic import BaseModel, Field
 
@@ -34,11 +36,16 @@ RUBRIC = {
                       "follows from findings.",
     "communication": "Answer-first, pyramid structure, concise. 1 = rambling; "
                      "5 = crisp answer then supporting points.",
-    "efficiency": "Reached the answer with few, purposeful questions/searches. "
-                  "1 = scattershot or far too many; 5 = economical and targeted.",
+    "efficiency": "Measured, not judged. Wasted questions = unanswered ('I don't have that "
+                  "information') + no new information (a reply already given). 5 = waste "
+                  "<= 20% and no more questions than the reference interview's candidate "
+                  "turns; 4 = waste <= 35% and <= 1.5x reference; 3 = waste <= 50% and <= 2x "
+                  "reference; 2 = waste <= 75%; 1 = more. No questions at all = 3 (nothing "
+                  "wasted, nothing gathered). Tokens and searches are reported, not scored.",
 }
-PROCESS = ("scoping", "structure", "hypotheses", "maths", "evidence", "efficiency")
+PROCESS = ("scoping", "structure", "hypotheses", "maths", "evidence")
 OUTCOME = ("key_insight", "recommendation", "communication")
+MEASURED = ("efficiency",)
 
 _BASE = ("You are a strict consulting-interview assessor. Score the candidate on each rubric "
          "dimension below from 1 to 5 using the reference solution as ground truth. Do not "
@@ -65,7 +72,6 @@ class ProcessVerdict(BaseModel):
     hypotheses: Score
     maths: Score
     evidence: Score
-    efficiency: Score
 
 
 class OutcomeVerdict(BaseModel):
@@ -98,6 +104,7 @@ class Submission(BaseModel):
     questions_asked: int = 0
     searches: int = 0
     work: str = ""  # work record: issue tree, hypotheses, analyses, facts ("" = none kept)
+    tokens: int = 0  # LLM tokens the run used (reported with efficiency, not scored)
 
 
 def reference(case: Case) -> str:
@@ -105,6 +112,30 @@ def reference(case: Case) -> str:
     return (f"PROBLEM: {case.problem_statement}\nNUMERICAL CASE: {case.numerical}\n"
             f"REFERENCE STRUCTURE:\n{case.structure}\nDATA AVAILABLE:\n{data}\n"
             f"KEY INSIGHT: {case.key_insight}\nREFERENCE RECOMMENDATION: {case.recommendation}")
+
+
+def efficiency(case: Case, sub: Submission) -> Score:
+    """Deterministic efficiency score from the transcript (rubric anchors above)."""
+    from consultant.evals.simulator import NOT_AVAILABLE
+    replies = [t["content"] for t in sub.transcript[1:] if t["role"] == "interviewer"]
+    asked = sum(t["role"] == "candidate" for t in sub.transcript)
+    unanswered = sum(r == NOT_AVAILABLE for r in replies)
+    seen, stale = set(), 0
+    for r in replies:
+        if r != NOT_AVAILABLE:
+            stale += r in seen
+            seen.add(r)
+    ref = max(1, sum(t["role"] == "candidate" for t in case.transcript))
+    facts = (f"{asked} questions (reference interview: {ref} candidate turns), {unanswered} "
+             f"unanswered, {stale} with no new information, {sub.searches} searches, "
+             f"{sub.tokens:,} tokens.")
+    if not asked:
+        return Score(score=3, justification=f"{facts} Nothing wasted, nothing gathered.")
+    waste = (unanswered + stale) / asked
+    ratio = asked / ref
+    score = (5 if waste <= .2 and ratio <= 1 else 4 if waste <= .35 and ratio <= 1.5
+             else 3 if waste <= .5 and ratio <= 2 else 2 if waste <= .75 else 1)
+    return Score(score=score, justification=f"{facts} {waste:.0%} of questions wasted.")
 
 
 def judge(llm: LLM, case: Case, sub: Submission, role: str = "judge") -> Verdict:
@@ -119,4 +150,4 @@ def judge(llm: LLM, case: Case, sub: Submission, role: str = "judge") -> Verdict
                               {"role": "user", "content": f"{ref}CANDIDATE FINAL ANSWER\n"
                                                           f"{clip(sub.final_answer, 900)}"}],
                        OutcomeVerdict)
-    return Verdict(**p.model_dump(), **o.model_dump())
+    return Verdict(**p.model_dump(), **o.model_dump(), efficiency=efficiency(case, sub))

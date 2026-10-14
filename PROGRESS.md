@@ -602,3 +602,43 @@ detail, per-fix diagnosis and open decisions: **MORNING_REPORT.md**.
   held-out 10/10, dev 5/10, all 15/20. The held-out set skews easy (all passed on the first
   run, which is why they were never inspected), so 100% overstates; fresh questions needed.
 - Offline suite: 113 passed.
+
+### 2026-10-14: answer quality (branch `answer-quality`, after merging eval-fairness into main)
+Offline only (no live Groq evals); all of it is to be re-run on Claude (DEFERRED_EVALS.md,
+"Re-run plan": 6 train cases = the original 3 + p031/p033/p039, which nothing was tuned on).
+- **Always a best answer.** The storyliner fills `StoryDraft`, which requires the answer-first
+  fields: recommendation, confidence with its reason, the 2-3 evidence ids it rests on, what
+  would change it (older saved drafts still load). The prompt and `skills/deliverables.md` say
+  "collect more data before deciding" is only ever a next step. The validator flags an answer
+  that defers (`deferred_answer`, regex on phrasings like "cannot conclusively recommend",
+  "collect data before deciding"; caught p012's real answer, none of 5 committed answers),
+  the review loop sends it back as a blocking non_sequitur, and the repair pass gets one
+  targeted rewrite. The budget fallback draft now commits to the best-supported hypothesis
+  at low confidence. The number rules are unchanged. Memo and judge text lead with
+  recommendation → confidence + reason → rests on → what would change it.
+- **Partner: blocking vs comments.** Blocking = unsupported_claim, maths, non_sequitur,
+  missing_branch, client_pleasing at major/critical. New non-blocking kinds: wording,
+  emphasis, framing (and minor anything). Verdict set in code: approve with comments when
+  nothing blocks. The prompt says to recompute before calling something maths (the false
+  objection on the clean draft). `partner_eval` passes only with 5/5 caught as blocking AND
+  the clean draft approved. Offline test: realistic clean-draft comments → approved; every
+  planted flaw → blocking, even when the model itself says approve. Live behaviour untested.
+- **Period check.** A number taken from a cited fact must be for the period the claim states
+  (FY24 claim → FY24 fact; a quarterly fact can't back an annual claim). Test uses the smoke
+  case (a Jul 2026 quarterly margin cited for FY24). Month names don't count as sub-year:
+  "Mar 2024" labels a full fiscal year in Indian sources. Period flags go through the repair
+  pass like unsupported numbers. On the stored drafts: no false positives.
+- **Efficiency.** Both candidates scored 1.00 because both really were inefficient (judge notes:
+  questions spent on data the case doesn't have, repeats), but the judge only had a raw
+  question count and a vague rubric. Efficiency is now measured, not judged: wasted questions
+  (unanswered + no new information) vs the reference interview's candidate turns, with fixed
+  anchors; tokens and searches are reported, not scored (scoring tokens would penalise the
+  research architecture by design). On the stored runs 62-88% of questions went unanswered
+  for both. That also raises a question about the simulator's item matching (logged in PLAN).
+  Offline discrimination test: an efficient run scores 5, a wasteful one 1, at every
+  reference length, and the score never rises as waste grows.
+- **Fresh fact questions.** `consultant/evals/fact_questions_fresh.yaml`: 10 proposed
+  questions (exports, GST, two-wheelers, forex reserves, major-port cargo, Kotak, Tata Steel,
+  Sun Pharma, NTPC, FDI equity), each with the answer found, source URL, source type and a
+  confidence note. Not used or run; a test checks nothing in `consultant/` loads them.
+- Offline suite: 119 passed.
