@@ -285,12 +285,21 @@ def test_partner_eval_scoring_is_strict(tmp_path):
 
 def test_run_case_produces_judged_result(tmp_path):
     from consultant.evals import run_system
-    from consultant.evals.judge import RUBRIC
+    from consultant.evals.judge import OUTCOME, PROCESS, RUBRIC
 
     class Judged(ScriptedLLM):
-        def Verdict(self, user):
-            assert "CANDIDATE TRANSCRIPT" in user and "Unhedged butter" in user
-            return {k: {"justification": "ok", "score": 3} for k in RUBRIC}
+        # process dims see the transcript + workspace; outcome dims see the answer only
+        def ProcessVerdict(self, user):
+            assert "CANDIDATE TRANSCRIPT" in user and "ISSUE TREE" in user
+            assert "HYPOTHESES" in user and "ANALYSES" in user and "FACTS" in user
+            assert "CANDIDATE FINAL ANSWER" not in user
+            return {k: {"justification": "ok", "score": 3} for k in PROCESS}
+
+        def OutcomeVerdict(self, user):
+            assert "Unhedged butter" in user and "CANDIDATE TRANSCRIPT" not in user
+            assert "ISSUE TREE" not in user
+            return {k: {"justification": "ok", "score": 3} for k in OUTCOME}
+    assert set(PROCESS) | set(OUTCOME) == set(RUBRIC) and not set(PROCESS) & set(OUTCOME)
     import consultant.agents.engagement_manager as em
     orig = em.Retriever.load
     em.Retriever.load = classmethod(lambda cls, *a, **k: cls([]))

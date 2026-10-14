@@ -12,7 +12,7 @@ import argparse
 import json
 from pathlib import Path
 
-from consultant.agents.engagement_manager import Engagement
+from consultant.agents.engagement_manager import Engagement, hypotheses_text
 from consultant.agents.storyliner import Draft, render_text
 from consultant.config import ROOT
 from consultant.evals.common import code_version
@@ -27,13 +27,42 @@ from consultant.workspace import Workspace
 RESULTS = ROOT / "eval_results"
 
 
-def submission(iv: Interviewer, draft: Draft, searches: int = 0) -> Submission:
+def work_record(ws: Workspace, max_facts: int = 25) -> str:
+    """What the judge sees of the system's process: issue tree, hypotheses with status and
+    evidence, analyses with results, and the facts gathered."""
+    st = ws.state
+
+    def tree(n, depth=0):
+        return [f"{'  ' * depth}- {n.id} {n.text}"] + [x for c in n.children
+                                                       for x in tree(c, depth + 1)]
+    analyses = [f"{a.id} {a.name}: {a.purpose} -> "
+                + (json.dumps(a.result, default=str)[:300] if a.ok else f"FAILED ({a.error})")
+                for a in st.analyses]
+    facts = ws.facts.facts(st.engagement_id)
+    return "\n".join(
+        ["ISSUE TREE:", *(tree(st.issue_tree) if st.issue_tree else ["(none)"]),
+         "HYPOTHESES:", hypotheses_text(ws) or "(none)",
+         "ANALYSES:", *(analyses or ["(none)"]),
+         f"FACTS ({len(facts)} gathered):",
+         *[f"F{f.id}: {f.claim[:160]}" for f in facts[:max_facts]]])
+
+
+def final_draft(ws: Workspace) -> Draft:
+    """The draft that was delivered: after the repair pass if it ran, else the last story."""
+    n = ws.state.notes
+    if "repair" in n:
+        return Draft(**n["repair"])
+    last = max(int(k[5:]) for k in n if k.startswith("story") and k[5:].isdigit())
+    return Draft(**n[f"story{last}"])
+
+
+def submission(iv: Interviewer, draft: Draft, searches: int = 0, work: str = "") -> Submission:
     t = [{"role": "interviewer", "content": iv.opening()}]
     for e in iv.log:
         t += [{"role": "candidate", "content": e["question"]},
               {"role": "interviewer", "content": e["reply"]}]
     return Submission(transcript=t, final_answer=render_text(draft),
-                      questions_asked=len(iv.log), searches=searches)
+                      questions_asked=len(iv.log), searches=searches, work=work)
 
 
 def run_case(llm, case: Case, root: Path, profile: str = "dev") -> dict:
@@ -42,7 +71,7 @@ def run_case(llm, case: Case, root: Path, profile: str = "dev") -> dict:
     # replay the interview log so a resumed engagement's transcript is complete
     iv.log = ws.state.notes.get("interview_log", [])
     out = Engagement(llm, ws, interviewer=iv).run()
-    verdict = judge(llm, case, submission(iv, out["draft"]))
+    verdict = judge(llm, case, submission(iv, out["draft"], work=work_record(ws)))
     return {"case_id": case.id, "case_type": case.case_type, "code_version": code_version(),
             "stopped": out["stopped"], "scores": verdict.scores(),
             "overall": verdict.overall(), "verdict": verdict.model_dump(),
