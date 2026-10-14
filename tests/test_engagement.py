@@ -119,7 +119,7 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     out = eng.run()
     st = ws.state
     assert st.steps_done == ["scope", "plan", "iter0", "story0", "review0", "story1",
-                             "review1", "deliver"]
+                             "review1", "repair", "deliver"]
     assert st.problem_statement == BAKERY.problem_statement and st.case_type == "profitability"
     # clarifying + hypothesis questions went to the client; answers stored as sourced facts
     assert len(iv.log) >= 4
