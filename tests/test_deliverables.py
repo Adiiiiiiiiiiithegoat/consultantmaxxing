@@ -306,3 +306,50 @@ def test_deferring_draft_is_sent_back_and_the_repair_pass_commits_it(tmp_path):
     fb = fallback_draft(ws)                            # budget-exhausted fallback commits too
     assert fb.answer.startswith("Best current answer (low confidence)") and not defers(fb.answer)
     assert fb.confidence == "low" and fb.would_change
+
+
+def test_cited_fact_must_be_for_the_period_the_claim_states(tmp_path):
+    # smoke-asianpaints-2: a repair "fixed" an FY24 claim by citing a stockezee figure for the
+    # latest quarter (Jul 2026), and the validator couldn't tell
+    from consultant.deliverables.repair import UNVERIFIED, repair
+    ws = Workspace.create("p1", root=tmp_path, problem_statement="Why did margins change?",
+                          scope={"restated_question": "Why did margins change in FY2023-24?"})
+    web = dict(engagement_id="p1", source_type="trade", credibility=3,
+               source_url="https://www.stockezee.com/stocks/asianpaint/results")
+
+    def fact(value, period, quote, **kw):
+        f = Fact(claim=quote, value=value, unit="%", period=period, quote=quote,
+                 **{**web, **kw})
+        return f"F{ws.facts.add(f)}"
+    q2026 = fact(43.59, "Jul 2026", "Gross Margin % | 43.93% | 42.69% | 43.59% |")
+    fy24 = fact(43.59, "FY2023-24", "Gross margin for FY2023-24 was 43.59%")
+    q4fy24 = fact(43.59, "Q4 FY24", "Gross margin in Q4 FY24 was 43.59%")
+    undated = fact(43.59, "", "Gross margin 43.59%")
+    client = fact(43.59, "", "our margin is 43.59%", source_url="case://x/interviewer")
+
+    def flags(point, ref):
+        d = Draft(answer="Keep pricing ahead of input costs.", risks=["Input costs rise"],
+                  arguments=[Argument(title="Pricing protected the margin", text="See slide.",
+                                      refs=[ref])], next_steps=["Track input costs"],
+                  open_questions=[], confidence="medium",
+                  slides=[Slide(action_title="Gross margin rose despite costlier inputs",
+                                points=[point], refs=[ref])])
+        return [i for i in validate_draft(ws, d) if i["kind"] == "period_mismatch"], d
+    bad, d = flags("FY24 gross margin 43.59%", q2026)
+    assert bad and bad[0]["numbers"] == ["43.59"] and "Jul 2026" in bad[0]["detail"]
+    assert not flags("FY24 gross margin 43.59%", fy24)[0]           # same year: fine
+    assert flags("FY24 gross margin 43.59%", q4fy24)[0]             # quarter cited for year
+    assert not flags("Q4 FY24 gross margin 43.59%", q4fy24)[0]      # quarter for quarter
+    assert not flags("Gross margin was 43.59%", q2026)[0]           # no period claimed
+    fy_label = fact(43.59, "Mar 2024", "Gross margin | Mar 2024 | 43.59%")
+    assert not flags("FY24 gross margin 43.59%", fy_label)[0]       # 'Mar 2024' = FY24
+    assert flags("FY2023-24 gross margin 43.59%", undated)[0]       # web fact, no period
+    assert not flags("FY24 gross margin 43.59%", client)[0]         # client said it
+    from consultant.tracing import BudgetExceeded
+
+    class NoBudget:
+        def structured(self, *a, **k):
+            raise BudgetExceeded("tokens")
+    fixed, removed = repair(NoBudget(), ws, d, "evidence")          # no budget: remove it
+    assert fixed.slides[0].points == [f"FY24 gross margin {UNVERIFIED}"]
+    assert removed == ["43.59 in slide 1 (cited evidence is for another period)"]

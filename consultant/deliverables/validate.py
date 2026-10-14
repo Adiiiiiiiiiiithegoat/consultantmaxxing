@@ -1,6 +1,7 @@
 """Deliverable validator: every number in the memo/storyline must appear in evidence the same
 argument or slide cites (a fact's value/quote/claim, an analysis output, an assumption), or
-in the client's own question. Every slide needs an action title."""
+in the client's own question, and a number taken from a fact must be for the period the
+claim states. The answer must commit. Every slide needs an action title."""
 
 import re
 
@@ -80,6 +81,49 @@ _DEFERRAL = re.compile(
     r"research|information)\b[^.]*\.?\s*$", re.I)
 
 
+# A period stated in a claim: FY24, Q4 FY24, FY2023-24, 2023-24, 2024.
+_PERIOD = re.compile(r"\b(?:Q[1-4]\s*)?FY\s*['’]?\d{2,4}(?:\s*[-–—‑‐/]\s*\d{2,4})?\b"
+                     r"|\b(?:19|20)\d{2}(?:\s*[-–—‑‐/]\s*\d{2,4})?\b", re.I)
+# Sub-year periods. Month names are not used: "Mar 2024" often labels a full fiscal year.
+_SUB_YEAR = re.compile(r"\bQ[1-4]\b|\bH[12]\b|quarter|\b\d+M\b|\bmonths?\b", re.I)
+
+
+def _segments(text: str) -> list[str]:
+    return [s for s in re.split(r"(?<=[.;!?])\s+", text) if s.strip()]
+
+
+def period_mismatches(ws, segments: list[str], refs: list[str]) -> list[tuple[str, str]]:
+    """(number, why) for numbers whose cited fact is for another period than the claim states
+    (e.g. a Jul 2026 quarterly margin cited for FY24). Only facts whose own value is the
+    number count (a number elsewhere in a table-row quote has no known column); a claim with
+    no stated period isn't checked; client-interview facts carry no period and are skipped."""
+    from consultant.research.triangulate import period_key
+    facts = {f"F{f.id}": f for f in ws.facts.facts(ws.state.engagement_id)}
+    cited = [facts[r.strip()] for r in refs if r.strip() in facts
+             and facts[r.strip()].value is not None]
+    out = []
+    for seg in segments:
+        stated = {period_key(m.group()) for m in _PERIOD.finditer(seg)}
+        if not stated or not cited:
+            continue
+        annual = not _SUB_YEAR.search(seg)
+
+        def fits(f, stated=stated, annual=annual) -> bool:
+            key = period_key(f.period or "")
+            if not key.isdigit():
+                return not f.source_url.startswith("http")
+            return key in stated and not (annual and _SUB_YEAR.search(f.period))
+        for m in _NUM.finditer(_FY.sub(" ", _REFS.sub(" ", seg))):
+            n = m.group(1)
+            hits = [f for f in cited if _matches(n, [f.value])]
+            if hits and not any(fits(f) for f in hits) and not re.fullmatch(r"(19|20)\d{2}", n):
+                out.append((n, ", ".join(f"F{f.id} is for '{f.period or 'no stated period'}'"
+                                         for f in hits)
+                            + f", the claim is for {'/'.join(sorted(stated))}"
+                            + ("" if not annual else " (full year)")))
+    return out
+
+
 def defers(answer: str) -> bool:
     """True if the answer postpones the decision instead of recommending something."""
     return bool(_DEFERRAL.search(answer.strip()))
@@ -94,12 +138,16 @@ def validate_draft(ws, d: Draft) -> list[dict]:
     every = ref_numbers(ws, all_refs) + context
     issues = []
 
-    def check(where: str, text: str, refs: list[str], pool=None):
+    def check(where: str, text: str, refs: list[str], pool=None, segs=None):
         bad = unsupported_numbers(text, pool if pool is not None else
                                   ref_numbers(ws, refs) + context)
         if bad:
             issues.append({"where": where, "kind": "unsupported_number", "numbers": bad,
                            "detail": f"{', '.join(bad)} not found in cited evidence {refs}"})
+        if wrong := period_mismatches(ws, segs if segs is not None else _segments(text), refs):
+            issues.append({"where": where, "kind": "period_mismatch",
+                           "numbers": [n for n, _ in wrong],
+                           "detail": "; ".join(f"{n}: {why}" for n, why in wrong)})
     check("answer", d.answer, all_refs, every)
     if defers(d.answer):
         issues.append({"where": "answer", "kind": "deferred_answer",
@@ -107,17 +155,18 @@ def validate_draft(ws, d: Draft) -> list[dict]:
                                  "deciding'); commit to the best-supported recommendation and "
                                  "move data collection to the next steps"})
     check("confidence reason", d.confidence_reason, all_refs, every)
-    check("would change", " ".join(d.would_change), all_refs, every)
+    check("would change", " ".join(d.would_change), all_refs, every, d.would_change)
     for i, a in enumerate(d.arguments, 1):
         check(f"argument {i}", f"{a.title} {a.text}", a.refs)
     for i, s in enumerate(d.slides, 1):
-        check(f"slide {i}", " ".join([s.action_title, *s.points]), s.refs)
+        check(f"slide {i}", " ".join([s.action_title, *s.points]), s.refs, None,
+              [s.action_title, *s.points])
         t = s.action_title.strip()
         if len(t.split()) < 4 or t.lower().strip(" .:") in GENERIC_TITLES:
             issues.append({"where": f"slide {i}", "kind": "no_action_title",
                            "detail": f"'{t}' is a topic, not an insight"})
     for name, items in (("risks", d.risks), ("next steps", d.next_steps)):
-        check(name, " ".join(items), all_refs, every)
+        check(name, " ".join(items), all_refs, every, items)
     unknown = [r for r in all_refs if not ref_numbers(ws, [r]) and not _known(ws, r)]
     if unknown:
         issues.append({"where": "refs", "kind": "unknown_ref", "detail": f"unknown {unknown}"})
