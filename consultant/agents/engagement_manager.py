@@ -17,7 +17,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from consultant import deliverables
-from consultant.agents import analyst, partner, storyliner
+from consultant.agents import analyst, interview, partner, storyliner
 from consultant.agents.research_associate import ResearchAssociate
 from consultant.config import profile as load_profile
 from consultant.deliverables import repair
@@ -35,6 +35,8 @@ from consultant.workspace import Hypothesis, IssueNode, Workspace
 
 MAX_REVIEW_ROUNDS = 3
 INVESTIGATE_SHARE = 0.7
+STALE_STOP = 2  # case mode: this many replies in a row with nothing new end the interview
+NO_INFO = "I don't have that information"  # how the case interviewer declines
 
 
 # ---- LLM output schemas -------------------------------------------------------------------
@@ -95,7 +97,8 @@ PLAN_SYS = ("Build a MECE issue tree for the question (flat list of nodes with p
             "root has parent null) and 3-6 falsifiable hypotheses on its most likely branches, "
             "ranked. Each hypothesis says what would prove or kill it and which data questions "
             "to ask. Avoid simply adopting the client's initial belief: include competing "
-            "explanations. Data questions must be self-contained search questions: name the "
+            "explanations. Unless this is a case interview (then follow the CASE INTERVIEW "
+            "note), data questions must be self-contained search questions: name the "
             "company/entity, the metric and the period (e.g. 'Acme Ltd consolidated EBITDA "
             "margin FY2023-24'), never 'the company'. If the client did not state the "
             "direction or size of a change, the top-priority question must establish it "
@@ -107,6 +110,21 @@ ASSESS_SYS = ("Update every hypothesis from the evidence: supported, killed, nee
               "for quantitative analyses where numbers would settle a hypothesis. Propose the "
               "next questions for unresolved priority hypotheses. Set done when the priority "
               "hypotheses are resolved or more evidence would not change the answer.")
+# case mode: the questions go to the client in conversation, not to a search engine
+CASE_QUESTIONS = ("CASE INTERVIEW: your questions go to the client, in conversation. Write "
+                  "each as one short question with one subject, the way you would say it to "
+                  "the client, not a search query. Never ask what the evidence already "
+                  "answers or what is in ALREADY ASKED; fewer, sharper questions are better.")
+RESPOND_SYS = ("You are the candidate in a consulting case interview. The interviewer's last "
+               "message asks you something or tells you what to look at next. Answer it "
+               "directly first: your structure or your hypotheses for that point, in 2-4 short "
+               "sentences that use what the client has already told you. Then, only if you "
+               "need data to test them, ask for the single most useful piece in one short "
+               "question. Never repeat a question already asked.")
+
+
+class CandidateTurn(BaseModel):
+    message: str = Field(description="what you say to the interviewer")
 
 
 def fallback_draft(ws: Workspace) -> storyliner.Draft:
@@ -229,17 +247,61 @@ class Engagement:
             self.ws.facts.set_verified(i, True, "client-provided case data")
         return ids
 
+    # ---- case-mode interview: a conversation, not a data API ----------------------------
+    def _interview_over(self) -> bool:
+        """Two replies in a row with nothing new end the interview; max_questions is only a
+        ceiling (the first Claude run spent all 12 in every case, 58-92% of them wasted)."""
+        n = self.ws.state.notes
+        return (n.get("stale_run", 0) >= STALE_STOP
+                or len(self.iv.log) >= self.prof.get("max_questions", 10))
+
+    def _turn(self, message: str) -> str:
+        """Say one thing to the interviewer; store what's new; track replies with nothing new."""
+        st = self.ws.state
+        seen = {e["reply"] for e in self.iv.log}
+        reply = self.iv.ask(message)
+        new = not reply.startswith(NO_INFO) and reply not in seen
+        if new:
+            self._client_fact(message, reply)
+        st.notes["stale_run"] = 0 if new else st.notes.get("stale_run", 0) + 1
+        st.notes["interview_log"] = self.iv.log  # survives a mid-run kill
+        self.ws.save()
+        return reply
+
+    def _respond(self, prompt: str) -> str:
+        """Answer the interviewer's prompt with a structure or hypotheses (guided cases only
+        hand over their data to a candidate who engages with the prompt)."""
+        convo = "\n".join(f"CANDIDATE: {e['question']}\nINTERVIEWER: {e['reply']}"
+                          for e in self.iv.log)
+        return self._ask(RESPOND_SYS, f"CASE: {self.ws.state.problem_statement}\n"
+                                      f"HYPOTHESES:\n{hypotheses_text(self.ws) or '(none yet)'}"
+                                      f"\n\nCONVERSATION SO FAR:\n{convo}\n\nINTERVIEWER'S LAST "
+                                      f"MESSAGE: {prompt}", CandidateTurn).message
+
     def _ask_client(self, questions: list[str]) -> None:
+        st = self.ws.state
         for q in questions:
-            asked = len(self.iv.log)
-            if asked >= self.prof.get("max_questions", 10):
-                self.ws.state.open_questions.append(q)
+            if self._interview_over():
+                st.open_questions.append(q)
                 continue
-            reply = self.iv.ask(q)
-            if not reply.startswith("I don't have that information"):
-                self._client_fact(q, reply)
-            self.ws.state.notes["interview_log"] = self.iv.log  # survives a mid-run kill
-            self.ws.save()
+            asked = [e["question"] for e in self.iv.log]
+            if interview.search_style(q) or interview.repeats(q, asked):
+                st.notes.setdefault("not_asked", []).append(q)  # a search query, or a re-ask
+                continue
+            reply = self._turn(q)
+            while (interview.prompts_candidate(reply) and not reply.startswith(NO_INFO)
+                   and not self._interview_over()):
+                reply = self._turn(self._respond(reply))
+
+    def _case_note(self) -> str:
+        """Case mode: questions are said to the client (the plan prompt asks for search
+        queries, which went to the client and were never answered) and not repeated."""
+        if self.ws.state.mode != "case":
+            return ""
+        asked = "\n".join(f"- {e['question']}" for e in self.iv.log) or "(nothing yet)"
+        over = ("\nThe interview is over (the client had nothing new): propose no questions."
+                if self._interview_over() else "")
+        return f"\n\n{CASE_QUESTIONS}{over}\nALREADY ASKED:\n{asked}"
 
     def _research(self, questions: list[str], hid: str | None = None) -> None:
         eid = self.ws.state.engagement_id
@@ -291,7 +353,7 @@ class Engagement:
         user = (f"QUESTION: {self._question()}\nSCOPE: {st.scope}\n"
                 f"EVIDENCE SO FAR:\n{evidence_text(self.ws)}\n\nPLAYBOOK:\n"
                 f"{playbooks.playbook(st.case_type)}\n\nSIMILAR PAST CASES (patterns only):\n"
-                f"{refs or '(none)'}")
+                f"{refs or '(none)'}" + self._case_note())
         plan = self._ask(PLAN_SYS, user, TreePlan)
         nodes = {n.id: IssueNode(id=n.id, text=n.text) for n in plan.nodes}
         root = None
@@ -323,7 +385,7 @@ class Engagement:
             pending.pop(h.id, None)
         a = self._ask(ASSESS_SYS, f"QUESTION: {self._question()}\nHYPOTHESES:\n"
                                   f"{hypotheses_text(self.ws)}\n\nEVIDENCE:\n"
-                                  f"{evidence_text(self.ws)}", Assessment)
+                                  f"{evidence_text(self.ws)}" + self._case_note(), Assessment)
         known = self._known_refs()
         for u in a.updates:
             if any(h.id == u.id for h in st.hypotheses):
