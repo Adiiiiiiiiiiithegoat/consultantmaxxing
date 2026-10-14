@@ -702,3 +702,56 @@ config (no apiKeyHelper / primaryApiKey); Claude Code is OAuth-logged-in.
 - **6-case estimate** (DEFERRED_EVALS.md): about 1-1.5 h and roughly half of one 5-hour window
   from a fresh window; judge (Opus) cost is the least certain part (not measured).
 - Offline suite: 130 passed.
+
+### 2026-10-14: diagnosis of the 6-case Claude eval (system 2.67 vs baseline 3.04)
+Measurement only, no system changes. Train split only.
+- **p033 (recommendation 2 vs 5).** (Case details are left out: casebook content is not
+  committed.) The baseline did the decision maths in its answer and picked the reference's
+  option. The system's first two drafts picked the same option. The partner's first two
+  reviews then argued for the one analysis (of 10) whose favourable assumptions supported
+  the alternative, and the third draft switched to it. The third review found that analysis
+  used a wrong unit cost for one scenario (critical), but no rounds were left; the repair
+  pass only fixes numbers, so the switched draft shipped with 6 unresolved points. Causes:
+  10 analyses with conflicting assumptions and no reconciled model; each revision rewritten
+  from scratch without the previous draft; the last draft ships, not the best-reviewed one.
+- **p017 (communication 3 vs 4; key insight 4 vs 5).** The case reveals its revenue-side
+  facts only when the candidate answers the interviewer's prompts. The baseline answered
+  them and got those facts; the system only sent data requests and search-style queries,
+  never received them, and recommended the opposite of the reference. Lost at the interview,
+  before any analysis. Communication: hedging, evidence ids, unrounded floats (15+ digits),
+  open questions listed twice.
+- **Context-loss bug (confirmed).** `evidence_text` cuts every fact claim at 220 chars.
+  Client replies are stored as "Client, asked '<question[:120]>': <reply>", so the
+  storyliner, partner, assessor and planner see only ~82 chars of each reply (measured
+  on all 6 cases). Replies without digits get no extracted facts, so the rest is lost.
+  Example: in p012 the client's stated budget and motive for entering never reached any
+  agent; the judge marked the answer down for calling the client's capital unknown, and the
+  EM asked about capital again. The brief also omits the original problem statement.
+  The 60-fact limit dropped nothing.
+- **Format bias (outcome dims, Opus uncached; result in
+  `eval_results/format-bias-train6.json`).** Gap system minus baseline, mean of
+  key_insight, recommendation and communication: original -1.00; same text re-judged -1.11
+  (judge stable: 33/36 cells identical); both rewritten by Sonnet into plain prose with the
+  same prompt (cap 300 words; came out at 296-394 for the system vs 355-443 for the
+  baseline) -0.94. Communication stays -1.0 in neutral prose. The loss is in content
+  (hedging, gating, caveats), not format. Note: the outcome judge clips answers to 2,700
+  chars; the system's are 6.7-8.6K, so the judge never saw its arguments.
+- **Efficiency.** The system asked 12 questions in all 6 cases (the profile cap); the
+  baseline asked 2-7 with 0 unanswered. System waste (unanswered + no new info): 11, 8, 10,
+  9, 10 and 7 of 12. 16 of the 72 questions were web-search queries sent to the client (12
+  unanswered); near-repeats: 3, 3, 1, 1, 1 and 2. The EM over-asks: no stop rule, research
+  queries go to the client in case mode, it can't see earlier answers (context-loss bug),
+  and it never answers the interviewer's prompts. Part of the "no new info" count is the
+  simulator re-sending item 0 for clarifications it can't answer (p033, p012).
+- **Judge issue (not changed):** process dims see only the baseline's transcript, not its
+  final answer, so its correct maths in p033 scored maths 1 and evidence 1.
+- **Partner fixture:** F3 listed base-year cost lines next to the Rs 22 crore total (6 + 4 +
+  10 = 20), which the partner flagged. Each line now states both years (6 -> 7.8, 4 -> 4.2,
+  10 flat); the consistency test now requires both years for every line. Partner eval not
+  re-run live.
+- Proposed fixes (not implemented; ranked in the session's report): full client replies in
+  the brief; a case-mode interview that answers prompts, sends only client questions and
+  stops when nothing new comes back; revisions that see the previous draft and ship the best
+  reviewed draft; one reconciled decision model; calibrated confidence and a cleaner final
+  answer.
+- Offline suite: 130 passed.

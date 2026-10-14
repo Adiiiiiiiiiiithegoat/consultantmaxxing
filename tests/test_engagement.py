@@ -454,11 +454,14 @@ def test_partner_fixture_numbers_are_internally_consistent():
 
     def pct(a, b):
         return (b - a) / a * 100
-    # every "% change" stated for a cost line in the evidence matches the accounts
+    # every cost line states both years (so the lines visibly sum to both totals; listing
+    # only base-year values beside the current total read as 6 + 4 + 10 = 20, not 22) and
+    # its "% change" matches the accounts
     for line, (a, b) in acc["cost_lines"].items():
-        stated = re.search(rf"{line}[^;|]*?Rs {a:g} crore ([+-]?\d+)%|{line}[^;|]*?flat",
-                           s["evidence"])
+        stated = re.search(rf"{line}[^;|]*?Rs {a:g} crore to Rs {b:g} crore \(([+-]?\d+)%\)"
+                           rf"|{line}[^;|]*?Rs {a:g} crore flat", s["evidence"])
         assert stated, line
+        assert stated.group(1) is not None or a == b, line
         assert stated.group(1) is None or abs(float(stated.group(1)) - pct(a, b)) < 0.5, line
     assert re.search(rf"Profits fell {-pct(*acc['profit']):g}%", s["evidence"])
     a1 = re.search(r"'base_cost_cr': (\S+), 'current_cost_cr': (\S+), 'increase_pct': (\S+)}",
