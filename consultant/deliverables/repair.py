@@ -21,7 +21,9 @@ REPAIR_SYS = (
     "You are the storyliner fixing a validation report. Each item below states a number that "
     "is not in the evidence it cites. For each item return its 'where' and the corrected "
     "fields (same field names as given): either cite the evidence id the number really comes "
-    "from (it must appear there exactly), or rewrite the sentence without that number. Change "
+    "from (it must appear there exactly AND that evidence must be for the same entity, metric "
+    "and period the sentence states: a figure for another quarter or year is not support), "
+    "or rewrite the sentence without that number. When unsure, remove the number. Change "
     "nothing else; never add a new number that is not in the evidence.")
 
 
