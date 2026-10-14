@@ -333,11 +333,12 @@ def test_run_case_produces_judged_result(tmp_path):
     from consultant.evals.judge import MEASURED, OUTCOME, PROCESS, RUBRIC
 
     class Judged(ScriptedLLM):
-        # process dims see the transcript + workspace; outcome dims see the answer only
+        # process dims see the transcript + workspace + the answer (maths done in the answer
+        # counts, for the baseline as for the system); outcome dims see the answer only
         def ProcessVerdict(self, user):
             assert "CANDIDATE TRANSCRIPT" in user and "ISSUE TREE" in user
             assert "HYPOTHESES" in user and "ANALYSES" in user and "FACTS" in user
-            assert "CANDIDATE FINAL ANSWER" not in user
+            assert "CANDIDATE FINAL ANSWER" in user and "Unhedged butter" in user
             return {k: {"justification": "ok", "score": 3} for k in PROCESS}
 
         def OutcomeVerdict(self, user):
