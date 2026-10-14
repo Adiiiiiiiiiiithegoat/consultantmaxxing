@@ -146,3 +146,40 @@ def test_claude_models_config_maps_roles_as_planned():
     profile = load_yaml("budgets.yaml")["profiles"]["claude"]
     assert profile["max_tokens"] > load_yaml("budgets.yaml")["profiles"]["dev"]["max_tokens"]
     assert json.dumps(load_yaml("models.claude.yaml")).count("api_key_env") == 0
+
+
+def test_compare_blinds_both_answers_identically_and_judges_each_fresh(tmp_path, monkeypatch):
+    import random
+
+    from consultant.evals import compare as cmp
+    monkeypatch.setattr(cmp, "ROOT", tmp_path)
+    problem = tmp_path / "problem.md"
+    problem.write_text("Should the bakery raise cake prices?", encoding="utf-8")
+    human = tmp_path / "human.md"
+    human.write_text("# My view\n\n**Raise prices 8%** and contract butter.\n\n* test first",
+                     encoding="utf-8")
+    system = ("# Should the bakery raise prices?\n\n## Answer\n**Recommendation:** Raise cake "
+              "prices toward rivals [F4, A1].\n\n**Rests on:** F4, A1\n\n## Why\n### 1. Costs\n"
+              "Costs rose (F3).  \n*Evidence: F3, A1*\n\n*Evidence ids: F = sourced fact.*"
+              "\n\n## ⚠ Validation flags\n- slide 2: '25' not found")
+    calls = []
+
+    class Judge:
+        def structured(self, role, msgs, schema, **kw):
+            calls.append((role, msgs[-1]["content"], kw))
+            return schema(**{k: {"justification": "j", "score": 4} for k in cmp.RUBRIC})
+    res = cmp.compare(problem, human, "cmp1", llm=Judge(), system_answer=system,
+                      rng=random.Random(1))
+    out = tmp_path / "engagements" / "cmp1"
+    mapping = json.loads((out / "key" / "mapping.json").read_text(encoding="utf-8"))
+    assert sorted(mapping.values()) == ["human", "system"] and not (out / "mapping.json").exists()
+    a, b = ((out / f"{x}.md").read_text(encoding="utf-8") for x in "AB")
+    for text, lab in ((a, "A"), (b, "B")):
+        assert text.startswith("CLIENT QUESTION\nShould the bakery") and f"\nANSWER {lab}\n" in text
+        for tell in ("[F", "(F3)", "F4, A1", "Evidence", "#", "**", "Validation", "⚠", "* test"):
+            assert tell not in text, (lab, tell)
+    assert "Recommendation: Raise cake prices toward rivals." in (a + b)
+    assert len(calls) == 2 and all(kw.get("cache") is False and role == "judge"
+                                   for role, _, kw in calls)
+    assert sum("ANSWER A" in c for _, c, _ in calls) == 1   # each call sees one answer only
+    assert res[mapping["A"]]["label"] == "A" and res["system"]["total"] == 4
