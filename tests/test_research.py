@@ -384,3 +384,20 @@ def test_fact_gate_split_and_heldout_accuracy(tmp_path, monkeypatch, capsys):
     assert s["accuracy_dev"] == 1.0 and s["accuracy_heldout"] == 0.0 and s["accuracy"] == 0.5
     log = capsys.readouterr().out
     assert "a: OK" in log and "b: done (held out)" in log and "want=7" not in log
+
+
+def test_fresh_held_out_questions_are_sourced_and_not_used_anywhere():
+    from pathlib import Path
+
+    import yaml
+
+    from consultant.evals import fact_finding as ff
+    fresh = yaml.safe_load(ff.QUESTIONS.with_name("fact_questions_fresh.yaml")
+                           .read_text(encoding="utf-8"))["questions"]
+    used = {q["id"] for f in ("fact_questions.yaml", "fact_questions_dev.yaml")
+            for q in yaml.safe_load(ff.QUESTIONS.with_name(f).read_text(encoding="utf-8"))
+            ["questions"]}
+    assert len(fresh) == 10 and not {q["id"] for q in fresh} & used
+    assert all(q["source"].startswith("https://") and float(q["answer"]) > 0 for q in fresh)
+    code = Path(ff.__file__).parents[1]  # held out: nothing in consultant/ may load them
+    assert not [p for p in code.rglob("*.py") if "fact_questions_fresh" in p.read_text("utf-8")]
