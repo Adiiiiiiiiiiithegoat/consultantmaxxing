@@ -271,9 +271,14 @@ following only the README; UI renders a live run; full test suite green.
 - [x] Judge: process dimensions on transcript + workspace, outcome dimensions on the answer only
 - [x] Baseline on the same 3 train cases, same model; system vs baseline per dimension
 - [x] Fact-finding gate split 10 dev / 10 held out; held-out accuracy is the headline
-- [ ] Storyliner: commit to a best answer when evidence is thin (it says "collect data" and loses outcome dims)
-- [ ] Partner: still rejects the (now consistent) clean draft on soft points; calibrate severity
-- [ ] Write 10 fresh hand-checked fact questions for an unbiased held-out set
+- [x] Storyliner always commits: recommendation, confidence + reason, 2-3 key evidence, what would change it, next steps
+- [x] Partner findings split into blocking vs comments; approve with comments
+- [x] Validator checks the cited fact's period matches the claim's period
+- [x] Efficiency measured from the transcript (unanswered / no-new-info vs reference)
+- [x] Propose 10 fresh fact questions with sources (`fact_questions_fresh.yaml`)
+- [ ] User spot-checks the 10 fresh fact questions; they become the held-out set
+- [ ] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval
+- [ ] Simulator: 62-88% of questions go unanswered for both system and baseline; check item matching isn't too strict
 
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain

@@ -16,7 +16,7 @@ them in this order once a paid key is available. All runners resume from where t
 | # | Check | Command | Pass criterion |
 |---|---|---|---|
 | 1.1 | Simulator reveals only relevant data | `uv run pytest -m live tests/test_simulator.py` | 8/8 relevant, 0/5 irrelevant (passed once on Groq, 2026-10-13) |
-| 1.2 | Judge discrimination | `uv run pytest -m live tests/test_judge.py -s` | strong beats flawed by ≥1.0 on ≥4/5 (passed 5/5 on Groq, 2026-10-13) |
+| 1.2 | Judge discrimination | `uv run pytest -m live tests/test_judge.py -s` | strong beats flawed by ≥1.0 on ≥4/5 (5/5 on Groq 2026-10-13; 5/5 again 2026-10-14 after the process/outcome split; re-run: efficiency is now measured, not judged) |
 | 1.3 | Baseline on the 15 test cases | `uv run python -m consultant.evals.baseline` | all 15 in `eval_results/baseline/`, summary in `eval_results/baseline.json` |
 
 Notes for 1.3: the pinned worktree `D:/Projects/consultantmaxxing-baseline` (commit
@@ -45,11 +45,24 @@ Re-run after changing the index: `uv run pytest tests/test_knowledge.py`.
 | # | Check | Command | Pass criterion |
 |---|---|---|---|
 | 5.1 | 3 train cases end-to-end in case mode | `uv run python -m consultant.evals.run_system cases --split train --n 3 --name system-train` | all 3 complete within budget (`within_budget` = 3), all artefacts in each workspace |
-| 5.2 | Partner catches seeded flaws | `uv run python -m consultant.evals.partner_eval` | ≥4/5 caught (strict: named kind, major/critical); clean draft approved |
+| 5.2 | Partner catches seeded flaws | `uv run python -m consultant.evals.partner_eval` | all 5 caught as blocking (named kind, major/critical) and the clean draft approved (comments allowed); `pass` in the output checks both |
 | 5.3 | One real-mode run on a simple public-company question | `uv run python -m consultant.evals.run_system real "Why did Asian Paints' margins change in FY24?"` | completes; deliverables written; facts verified |
 | 5.4 | Token actuals | `uv run python -m consultant.evals.token_estimate --traces eval-system-train` | replace the PROGRESS.md estimate |
 
 Use a 5-case **train** subset (`--n 5`) for iteration; never iterate on the test split.
+
+**Re-run plan after the answer-quality changes (2026-10-14).** Use 6 train cases: the
+original 3 (p012, p017, p025) plus the next 3 in the train order (p031, p033, p039), which no
+fix was developed against. Same model for system and baseline.
+```
+uv run consult eval system --split train --n 6 --name system-train6
+uv run consult eval baseline --split train --n 6 --name baseline-train6
+uv run python -c "from consultant.evals.report import *; from consultant.config import ROOT;   print(gate(load_rows(ROOT/'eval_results','system-train6'), load_rows(ROOT/'eval_results','baseline-train6')))"
+uv run consult eval partner      # 5/5 blocking + clean approved
+```
+Report the original 3 and the new 3 separately as well as together. Fact-finding: report
+`accuracy_heldout`; after the user has checked `consultant/evals/fact_questions_fresh.yaml`,
+those 10 become the held-out set.
 
 ## 5. Phase 6: deliverables
 Gate ran offline (validator, live formulas, action titles). Deferred live check:
