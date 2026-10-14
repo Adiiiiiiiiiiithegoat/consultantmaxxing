@@ -147,8 +147,13 @@ def evidence_text(ws: Workspace, verified_only: bool = False, limit: int = 60) -
     ids and short claims, not raw pages)."""
     eid = ws.state.engagement_id
     facts = ws.facts.eligible(eid) if verified_only else ws.facts.facts(eid)
-    rows = [f"F{f.id}: {f.claim[:220]} | value={f.value} {f.unit} | period={f.period} | "
-            f"source={f.source_type}" for f in facts[-limit:]]
+    # client replies are the case data: always all of them, in full (cut to 220 chars they
+    # showed ~82 chars of each reply); web facts are clipped and limited to the latest
+    client = [f for f in facts if f.source_type == "client"]
+    web = [f for f in facts if f.source_type != "client"][-limit:]
+    rows = [f"F{f.id}: {f.claim if f.source_type == 'client' else f.claim[:220]} | "
+            f"value={f.value} {f.unit} | period={f.period} | source={f.source_type}"
+            for f in sorted(client + web, key=lambda f: f.id)]
     rows += [f"A{a.id[1:]}: {a.name} -> {a.result}" if a.ok else
              f"A{a.id[1:]}: {a.name} FAILED ({a.error})" for a in ws.state.analyses]
     rows += [f"S{a.id}: {a.name} = {a.value} {a.unit} (estimate: {a.rationale[:100]})"
@@ -198,10 +203,14 @@ class Engagement:
         """Store a client (interviewer) answer as sourced facts: the reply itself, plus any
         numbers in it via the same verbatim-quote extractor used for web pages."""
         eid, src = self.ws.state.engagement_id, f"case://{self.iv.case.id}/interviewer"
+        # the reply itself is the claim, whole; a reply already on file is the same fact
+        same = [f.id for f in self.ws.facts.facts(eid)
+                if f.source_type == "client" and f.claim == reply]
+        if same:
+            return same
         base = dict(engagement_id=eid, source_url=src, source_title="Client (case data)",
                     source_type="client", credibility=5)
-        ids = [self.ws.facts.add(Fact(claim=f"Client, asked '{question[:120]}': "
-                                            f"{reply[:300]}", quote=reply, **base))]
+        ids = [self.ws.facts.add(Fact(claim=reply, quote=reply, **base))]
         if any(ch.isdigit() for ch in reply):
             page = Page(src, "Client (case data)", reply)
             found, _ = extract_facts(self.llm, page, question)
@@ -269,7 +278,7 @@ class Engagement:
         similar = self.retriever.similar_cases(st.problem_statement, 3)
         refs = "\n".join(f"- {h.doc.title} ({h.doc.meta['case_type']}): {h.doc.text[:300]} "
                          f"| structure used: {h.doc.meta['structure'][:300]}" for h in similar)
-        user = (f"QUESTION: {st.scope['restated_question']}\nSCOPE: {st.scope}\n"
+        user = (f"QUESTION: {self._question()}\nSCOPE: {st.scope}\n"
                 f"EVIDENCE SO FAR:\n{evidence_text(self.ws)}\n\nPLAYBOOK:\n"
                 f"{playbooks.playbook(st.case_type)}\n\nSIMILAR PAST CASES (patterns only):\n"
                 f"{refs or '(none)'}")
@@ -302,7 +311,7 @@ class Engagement:
             self._research(questions, open_h[0].id if open_h else None)
         for h in open_h:
             pending.pop(h.id, None)
-        a = self._ask(ASSESS_SYS, f"QUESTION: {st.scope['restated_question']}\nHYPOTHESES:\n"
+        a = self._ask(ASSESS_SYS, f"QUESTION: {self._question()}\nHYPOTHESES:\n"
                                   f"{hypotheses_text(self.ws)}\n\nEVIDENCE:\n"
                                   f"{evidence_text(self.ws)}", Assessment)
         known = self._known_refs()
@@ -347,9 +356,16 @@ class Engagement:
                 | {f"A{a.id[1:]}" for a in self.ws.state.analyses}
                 | {f"S{a.id}" for a in self.ws.facts.assumptions(eid)})
 
+    def _question(self) -> str:
+        """The restated question plus the problem as the client stated it (restating can drop
+        what the client said)."""
+        st = self.ws.state
+        return (f"{st.scope['restated_question']}\nAS THE CLIENT STATED THE PROBLEM: "
+                f"{st.problem_statement}")
+
     def _brief(self) -> str:
         st = self.ws.state
-        return (f"CLIENT QUESTION: {st.scope['restated_question']}\nOBJECTIVE: "
+        return (f"CLIENT QUESTION: {self._question()}\nOBJECTIVE: "
                 f"{st.scope['objective']} | METRIC: {st.scope['success_metric']} | HORIZON: "
                 f"{st.scope['horizon']}\nHYPOTHESES:\n{hypotheses_text(self.ws)}\n\n"
                 f"EVIDENCE:\n{evidence_text(self.ws, verified_only=True)}\n\nOPEN QUESTIONS: "
@@ -371,7 +387,7 @@ class Engagement:
         """Partner review plus the deterministic validator: an untraceable number or a
         topic-only slide title is a major issue even if the partner missed it."""
         st = self.ws.state
-        rv = partner.review(self.llm, st.scope["restated_question"],
+        rv = partner.review(self.llm, self._question(),
                             st.scope.get("client_prior", ""), storyliner.render_text(d),
                             evidence_text(self.ws, verified_only=True))
         for i in validate_draft(self.ws, d):

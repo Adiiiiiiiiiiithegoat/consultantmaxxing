@@ -520,3 +520,34 @@ def test_rejudge_rescores_a_finished_engagement_without_rerunning_it(tmp_path, m
     assert new["scores"]["efficiency"] == row["scores"]["efficiency"]  # measured: unchanged
     assert set(llm.calls) == {"ProcessVerdict", "OutcomeVerdict"}   # judge calls only
     assert (tmp_path / "results" / "sys-rejudged" / f"{BAKERY.id}.json").exists()
+
+
+LONG_REPLY = ("The owners run several unrelated businesses and have never made baked goods "
+              "themselves, so every recipe is licensed from a family supplier. They are not "
+              "short of money for this turnaround. What they care about most is keeping the "
+              "brand local and never closing an outlet, even an unprofitable one, because the "
+              "founder promised staff in every neighbourhood a job for life.")
+
+
+def test_client_reply_reaches_the_brief_in_full_and_once(tmp_path):
+    # regression: replies were stored as "Client, asked '<question>': <reply>" and every agent
+    # saw the first 220 chars, i.e. ~82 chars of the reply; a reply with no digits got no
+    # extracted facts, so the rest never reached the storyliner, partner or assessor
+    from consultant.agents.engagement_manager import evidence_text
+    case = BAKERY.model_copy(update={"clarifying_qa": [
+        BAKERY.clarifying_qa[0].model_copy(update={"question": "owners background budget",
+                                                   "answer": LONG_REPLY})]})
+    llm = ScriptedLLM()
+    ws = Workspace.open("e1", root=tmp_path, mode="case", profile="dev")
+    eng = Engagement(llm, ws, interviewer=Interviewer(case, llm), retriever=Retriever([]))
+    ws.state.problem_statement = case.problem_statement
+    ws.state.scope = llm.Scope("") | {"restated_question": "What should the bakery do?"}
+    assert len(LONG_REPLY) > 300 and not any(c.isdigit() for c in LONG_REPLY)
+    eng.iv.ask = lambda q: LONG_REPLY
+    eng._ask_client(["What is the owners' background and budget?",
+                     "Do the owners have money for this?"])           # same reply twice
+    client = [f for f in ws.facts.facts("e1") if f.source_type == "client"]
+    assert [f.claim for f in client] == [LONG_REPLY]                   # stored whole, once
+    for text in (evidence_text(ws, verified_only=True), eng._brief()):
+        assert LONG_REPLY in text and "job for life" in text
+    assert case.problem_statement in eng._brief()       # the problem as the client put it
