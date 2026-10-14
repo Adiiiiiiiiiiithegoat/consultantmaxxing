@@ -110,18 +110,36 @@ ASSESS_SYS = ("Update every hypothesis from the evidence: supported, killed, nee
 
 
 def fallback_draft(ws: Workspace) -> storyliner.Draft:
-    """Deterministic draft when no LLM draft could be written (budget exhausted): report what
-    is known, claim nothing new, mark confidence low."""
+    """Deterministic draft when no LLM draft could be written (budget exhausted). Still a best
+    answer: the best-supported hypothesis (supported first, then most evidence, then
+    priority), at low confidence, with what would change it. Claims nothing new."""
     st = ws.state
+    rank = {"supported": 0, "needs_more": 1, "open": 2, "killed": 3}
+    live = sorted((h for h in st.hypotheses if h.status != "killed"),
+                  key=lambda h: (rank[h.status], -len(h.evidence_fact_ids + h.analysis_ids),
+                                 h.priority))
     status = "; ".join(f"{h.id} {h.status}: {h.statement}" for h in st.hypotheses) or "none"
+    if live:
+        best = live[0]
+        answer = (f"Best current answer (low confidence): act on {best.id}, '{best.statement}', "
+                  f"the best-supported explanation so far ({best.status}).")
+        refs = [f"F{i}" for i in best.evidence_fact_ids] + list(best.analysis_ids)
+        change = [f"Evidence against {best.id}"] + [f"Evidence for {h.id}: {h.statement}"
+                                                    for h in live[1:3]]
+    else:
+        answer = "No hypothesis survived the investigation; no recommendation can be grounded."
+        refs, change = [], ["Any new evidence on the open questions"]
     return storyliner.Draft(
-        answer="No answer could be synthesised within the budget. Hypothesis status so far: "
-               f"{status}.",
+        answer=answer,
         arguments=[storyliner.Argument(title="Investigation was cut short by the budget cap",
-                                       text="See the open questions; resume or rerun with a "
-                                            "larger profile.", refs=[])],
-        risks=["Conclusions here are incomplete."], next_steps=["Resume with a larger budget."],
-        open_questions=list(st.open_questions), confidence="low", slides=[])
+                                       text=f"Hypothesis status so far: {status}.",
+                                       refs=refs)],
+        risks=["Conclusions here are incomplete."],
+        next_steps=["Resume with a larger budget to test the recommendation."],
+        open_questions=list(st.open_questions), confidence="low", slides=[],
+        confidence_reason="the budget ran out before synthesis; this rests on hypothesis "
+                          "status, not a full write-up",
+        key_evidence=refs[:3], would_change=change)
 
 
 def evidence_text(ws: Workspace, verified_only: bool = False, limit: int = 60) -> str:
@@ -357,7 +375,8 @@ class Engagement:
                             st.scope.get("client_prior", ""), storyliner.render_text(d),
                             evidence_text(self.ws, verified_only=True))
         for i in validate_draft(self.ws, d):
-            kind = "unsupported_claim" if i["kind"] != "no_action_title" else "other"
+            kind = {"no_action_title": "wording", "deferred_answer": "non_sequitur"}.get(
+                i["kind"], "unsupported_claim")
             rv.issues.append(partner.Issue(kind=kind, severity="major", where=i["where"],
                                            detail=f"[validator] {i['detail']}"))
             rv.verdict = "revise"

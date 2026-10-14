@@ -68,11 +68,29 @@ def unsupported_numbers(text: str, pool: list[float]) -> list[str]:
     return out
 
 
+# The answer must commit. ponytail: phrase patterns catch the usual deferrals ("cannot
+# conclusively recommend", "collect data before deciding", an answer that is only a data
+# request); a paraphrase can slip through: the partner's non_sequitur check is the backstop.
+_DEFERRAL = re.compile(
+    r"\b(?:cannot|can ?not|can't|unable to|not possible to|too early to)\b[^.]{0,60}?"
+    r"\b(?:recommend|conclude|decide|determine|commit)"
+    r"|\b(?:before|until)\b[^.]{0,50}?\b(?:decid|recommend|commit|choos)"
+    r"|^\W*(?:we recommend that |the client should |recommendation: )?(?:first )?"
+    r"(?:collect|gather|obtain|conduct|commission)\b[^.]{0,80}?\b(?:data|analysis|study|"
+    r"research|information)\b[^.]*\.?\s*$", re.I)
+
+
+def defers(answer: str) -> bool:
+    """True if the answer postpones the decision instead of recommending something."""
+    return bool(_DEFERRAL.search(answer.strip()))
+
+
 def validate_draft(ws, d: Draft) -> list[dict]:
     question = ws.state.problem_statement + " " + str(ws.state.scope.get("restated_question", ""))
     context = numbers_in(question)
     all_refs = sorted({r for a in d.arguments for r in a.refs} | {r for s in d.slides
-                                                                  for r in s.refs})
+                                                                  for r in s.refs}
+                      | set(d.key_evidence))
     every = ref_numbers(ws, all_refs) + context
     issues = []
 
@@ -83,6 +101,13 @@ def validate_draft(ws, d: Draft) -> list[dict]:
             issues.append({"where": where, "kind": "unsupported_number", "numbers": bad,
                            "detail": f"{', '.join(bad)} not found in cited evidence {refs}"})
     check("answer", d.answer, all_refs, every)
+    if defers(d.answer):
+        issues.append({"where": "answer", "kind": "deferred_answer",
+                       "detail": "the answer defers the decision (e.g. 'collect data before "
+                                 "deciding'); commit to the best-supported recommendation and "
+                                 "move data collection to the next steps"})
+    check("confidence reason", d.confidence_reason, all_refs, every)
+    check("would change", " ".join(d.would_change), all_refs, every)
     for i, a in enumerate(d.arguments, 1):
         check(f"argument {i}", f"{a.title} {a.text}", a.refs)
     for i, s in enumerate(d.slides, 1):

@@ -1,6 +1,7 @@
-"""Storyliner: pyramid-principle draft (answer first, 3-5 arguments, risks, next steps) and an
-action-titled slide storyline. Every claim cites F<fact id>, A<analysis id> or S<assumption
-id>; numbers may only come from those."""
+"""Storyliner: pyramid-principle draft (a committed recommendation first, confidence with its
+reason, the evidence it rests on, what would change it, then arguments, risks and next
+steps) and an action-titled slide storyline. Every claim cites F<fact id>, A<analysis id> or
+S<assumption id>; numbers may only come from those."""
 
 from typing import Literal
 
@@ -22,23 +23,43 @@ class Slide(BaseModel):
 
 
 class Draft(BaseModel):
-    answer: str = Field(description="the answer to the client's question, 2-4 sentences")
+    answer: str = Field(description="the committed recommendation, stated first, 2-4 "
+                                    "sentences; never 'collect more data before deciding'")
     arguments: list[Argument] = Field(min_length=1, max_length=5)
     risks: list[str]
     next_steps: list[str]
     open_questions: list[str]
     confidence: Literal["low", "medium", "high"]
     slides: list[Slide]
+    # defaults keep drafts saved before these fields existed loadable; StoryDraft requires them
+    confidence_reason: str = ""
+    key_evidence: list[str] = Field(default_factory=list)
+    would_change: list[str] = Field(default_factory=list)
+
+
+class StoryDraft(Draft):
+    """What the storyliner must fill in: the answer-first fields are required."""
+    confidence_reason: str = Field(description="why this confidence level: how strong the "
+                                               "evidence is and what is missing")
+    key_evidence: list[str] = Field(min_length=2, max_length=3, description="the 2-3 evidence "
+                                    "ids (F#, A#, S#) the recommendation rests on most")
+    would_change: list[str] = Field(min_length=1, max_length=4, description="findings that "
+                                    "would change the recommendation")
 
 
 STORY_SYS = (
-    "You are the storyliner. Write the engagement's answer using the pyramid principle: the "
-    "answer first, then 3-5 supporting arguments with action titles, then risks (include "
-    "material risks even without a mitigation), next steps and open questions. Then a slide "
-    "storyline whose action titles read as a story on their own. Use only the evidence "
-    "given; every number must appear in a cited fact (F#), analysis result (A#) or labelled "
-    "assumption (S#), copied exactly. Do not do arithmetic in text: if a number isn't in the "
-    "evidence, don't state it.\n\nHOUSE STYLE:\n")
+    "You are the storyliner. Always give the client a best answer: lead with a committed "
+    "recommendation, even when the evidence is thin; then lower the confidence and say why. "
+    "Structure: the recommendation; confidence (high/medium/low) with the reason; the 2-3 "
+    "pieces of evidence it rests on; what would change the answer; then 3-5 supporting "
+    "arguments with action titles, risks (include material risks even without a "
+    "mitigation), next steps and open questions. 'Collect more data before deciding' is "
+    "never the recommendation: data still to collect goes in the next steps, after the "
+    "recommendation. Then a slide storyline whose action titles read as a story on their "
+    "own. Use only the evidence given; committing means reasoning from it, never inventing "
+    "figures: every number must appear in a cited fact (F#), analysis result (A#) or "
+    "labelled assumption (S#), copied exactly. Do not do arithmetic in text: if a number "
+    "isn't in the evidence, don't state it.\n\nHOUSE STYLE:\n")
 
 
 def write(llm, brief: str, review: str = "", role: str = "storyliner") -> Draft:
@@ -46,13 +67,18 @@ def write(llm, brief: str, review: str = "", role: str = "storyliner") -> Draft:
     user = brief if not review else (f"{brief}\n\nPARTNER REVIEW OF YOUR PREVIOUS DRAFT — "
                                      f"fix every major/critical issue:\n{review}")
     return llm.structured(role, [{"role": "system", "content": system},
-                                 {"role": "user", "content": user}], Draft)
+                                 {"role": "user", "content": user}], StoryDraft)
 
 
 def render_text(d: Draft) -> str:
     args = "\n".join(f"{i}. {a.title}: {a.text} [{', '.join(a.refs)}]"
                      for i, a in enumerate(d.arguments, 1))
     slides = "\n".join(f"- {s.action_title} [{', '.join(s.refs)}]" for s in d.slides)
-    return (f"ANSWER: {d.answer}\nARGUMENTS:\n{args}\nRISKS: {'; '.join(d.risks)}\n"
+    return (f"RECOMMENDATION: {d.answer}\nCONFIDENCE: {d.confidence}"
+            + (f" ({d.confidence_reason})" if d.confidence_reason else "")
+            + (f"\nRESTS ON: {', '.join(d.key_evidence)}" if d.key_evidence else "")
+            + (f"\nWOULD CHANGE THE ANSWER: {'; '.join(d.would_change)}"
+               if d.would_change else "")
+            + f"\nARGUMENTS:\n{args}\nRISKS: {'; '.join(d.risks)}\n"
             f"NEXT STEPS: {'; '.join(d.next_steps)}\nOPEN QUESTIONS: "
-            f"{'; '.join(d.open_questions)}\nCONFIDENCE: {d.confidence}\nSLIDES:\n{slides}")
+            f"{'; '.join(d.open_questions)}\nSLIDES:\n{slides}")

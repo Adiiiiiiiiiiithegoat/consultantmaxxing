@@ -2,6 +2,7 @@
 
 import json
 
+import pytest
 from openpyxl import load_workbook
 
 from consultant.agents.storyliner import Argument, Draft, Slide
@@ -219,3 +220,89 @@ def test_repair_pass_fixes_or_removes_every_flagged_number(tmp_path):
     # 4) a clean draft makes no call
     llm = FakeLLM({"fixes": []})
     assert repair(llm, ws, good_draft(), "e") == (good_draft(), []) and llm.calls == 0
+
+
+DEFERRING = [
+    # system-train p012, the answer that lost key_insight and recommendation
+    "Given the absence of quantitative data on CAPEX, operating costs, timelines, and "
+    "government incentives, we cannot conclusively recommend a specific entry mode or "
+    "timeline. The client should first collect the missing data before deciding between "
+    "partnership, greenfield build, or acquisition.",
+    "The client should collect detailed route-level cost data.",
+    "It is too early to decide on an entry strategy.",
+    "Gather market data and run a feasibility study.",
+    "Hold off on a decision until the pilot results are in, then choose a mode."]
+COMMITTED = [
+    "Raise cake prices 8% and contract butter supply; collect outlet-level price elasticity "
+    "data next quarter to refine the rise.",
+    "Enter through a joint venture with a mature-node foundry; confidence is low because capex "
+    "data is missing, so commission a capex study as the first next step.",
+    "Cut fuel costs by refuelling where fuel is cheaper; we cannot yet size the saving "
+    "precisely.",
+    "Recommendation: exit the bread line. Before the exit, collect supplier contract data to "
+    "time it.",
+    "Pursue the premium segment; conduct a pricing study in two outlets to confirm the uplift."]
+
+
+def test_answer_must_commit_and_carry_the_answer_first_fields(tmp_path):
+    from pydantic import ValidationError
+
+    from consultant.agents.storyliner import StoryDraft, render_text
+    from consultant.deliverables.validate import defers
+    assert all(defers(a) for a in DEFERRING) and not any(defers(a) for a in COMMITTED)
+    ws = workspace(tmp_path)
+    d = good_draft()
+    d.answer = DEFERRING[0]
+    assert ("deferred_answer", "answer") in {(i["kind"], i["where"]) for i in
+                                             validate_draft(ws, d)}
+    fields = dict(confidence_reason="client figures agree", key_evidence=["F1", "A1"],
+                  would_change=["costs fall back"])
+    with pytest.raises(ValidationError):                # the storyliner must fill them in
+        StoryDraft(**good_draft().model_dump(exclude=set(fields)))
+    with pytest.raises(ValidationError):                # 2-3 pieces of evidence, not 1
+        StoryDraft(**{**good_draft().model_dump(), **fields, "key_evidence": ["F1"]})
+    full = StoryDraft(**{**good_draft().model_dump(), **fields})
+    assert validate_draft(ws, full) == []
+    text = render_text(full)
+    assert text.index("RECOMMENDATION:") < text.index("CONFIDENCE: medium (client figures")
+    assert "RESTS ON: F1, A1" in text and "WOULD CHANGE THE ANSWER: costs fall back" in text
+    bad_ref = StoryDraft(**{**full.model_dump(), "key_evidence": ["F1", "F99"]})
+    assert any(i["kind"] == "unknown_ref" for i in validate_draft(ws, bad_ref))
+    memo = render(ws, full) and (ws.dir / "deliverables/memo.md").read_text(encoding="utf-8")
+    assert memo.index("**Recommendation:**") < memo.index("**Confidence: medium.**") \
+        < memo.index("**Rests on:** F1, A1") < memo.index("## Why")
+
+
+def test_deferring_draft_is_sent_back_and_the_repair_pass_commits_it(tmp_path):
+    from consultant.agents.engagement_manager import fallback_draft
+    from consultant.deliverables.repair import repair
+    from consultant.deliverables.validate import defers
+    from tests.test_engagement import ScriptedLLM, engagement
+
+    class Hedger(ScriptedLLM):
+        def Draft(self, user):
+            d = super().Draft(user)
+            if "PARTNER REVIEW" not in user:          # first draft defers
+                d["answer"] = "We cannot recommend a pricing move until more data is collected."
+            return d
+    llm = Hedger()
+    eng, ws, _ = engagement(tmp_path, llm, eid="hedge")
+    out = eng.run()
+    assert llm.calls.count("StoryDraft") == 2 and not defers(out["draft"].answer)
+    review0 = ws.state.notes["review0"]
+    assert review0["verdict"] == "revise" and any(
+        i["kind"] == "non_sequitur" and "defers" in i["detail"] for i in review0["issues"])
+
+    class Fixer:
+        def structured(self, role, msgs, schema):
+            return schema(fixes=[{"where": "answer", "text": "Raise cake prices toward "
+                                  "competitors and contract butter; test prices first."}])
+    w2 = workspace(tmp_path / "w2")
+    d = good_draft()
+    d.answer = DEFERRING[0]
+    fixed, removed = repair(Fixer(), w2, d, "evidence")
+    assert not defers(fixed.answer) and removed == [] and validate_draft(w2, fixed) == []
+
+    fb = fallback_draft(ws)                            # budget-exhausted fallback commits too
+    assert fb.answer.startswith("Best current answer (low confidence)") and not defers(fb.answer)
+    assert fb.confidence == "low" and fb.would_change

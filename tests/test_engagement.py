@@ -97,6 +97,11 @@ class ScriptedLLM:
                 "slides": [{"action_title": "Butter costs, not customers, cut profit",
                             "points": ["costs up"], "refs": ["F3"]}]}
 
+    def StoryDraft(self, user):  # what the storyliner asks for: Draft + answer-first fields
+        return {"confidence_reason": "two client facts and one analysis agree",
+                "key_evidence": ["F3", "A1"], "would_change": ["butter prices fall back"],
+                **self.Draft(user)}
+
     def Review(self, user):
         self.reviews += 1
         major = self.reviews == 1
@@ -279,8 +284,48 @@ def test_partner_eval_scoring_is_strict(tmp_path):
     import consultant.evals.partner_eval as pe
     pe.ROOT = tmp_path
     out = partner_eval.run(FakePartner())
-    assert out["caught"] == 4 and out["pass"] and out["clean_verdict"] == "approve"
+    # 4/5 is a fail since the gate needs every planted flaw caught as blocking
+    assert out["caught"] == 4 and not out["pass"] and out["clean_verdict"] == "approve"
     assert [r["kind"] for r in out["rows"] if not r["caught"]] == ["maths"]
+
+
+def test_partner_approves_clean_with_comments_and_blocks_every_planted_flaw(tmp_path,
+                                                                             monkeypatch):
+    # The clean fixture used to be rejected on framing points labelled major ("conflates the
+    # cost rise with the profit impact", product mix). Comments must not block; each planted
+    # flaw must block even if the model itself says approve.
+    from consultant.agents import partner
+    from consultant.evals import partner_eval as pe
+    CUES = [("unsupported_claim", "market share fell"), ("maths", "25% increase"),
+            ("non_sequitur", "open five new outlets"), ("missing_branch", "renegotiate leases"),
+            ("client_pleasing", "as the client suspected")]
+    comments = [{"kind": "framing", "severity": "major", "where": "Argument 1",
+                 "detail": "conflates the cost increase with the profit impact"},
+                {"kind": "emphasis", "severity": "major", "where": "Analysis",
+                 "detail": "product mix deserves a mention"},
+                {"kind": "unsupported_claim", "severity": "minor", "where": "Argument 2",
+                 "detail": "spot-buying exposure is an inference"},
+                {"kind": "wording", "severity": "minor", "where": "Answer", "detail": "tighten"}]
+
+    class Partner:
+        def structured(self, role, msgs, schema):
+            draft = msgs[-1]["content"].split("DRAFT:")[1].split("EVIDENCE")[0].lower()
+            kind = next((k for k, cue in CUES if cue in draft), None)
+            issues = comments + ([{"kind": kind, "severity": "major", "where": "x",
+                                   "detail": "planted"}] if kind else [])
+            return schema(issues=issues, strongest_counterargument="c", ceo_questions=[],
+                          agrees_with_client_prior=False, prior_agreement_justified=True,
+                          verdict="approve" if kind else "revise")  # the model's own verdict
+    monkeypatch.setattr(pe, "ROOT", tmp_path)
+    out = pe.run(Partner())
+    assert out["caught"] == 5 and out["clean_verdict"] == "approve" and out["pass"]
+    assert len(out["clean_comments"]) == 4
+    assert all(r["verdict"] == "revise" for r in out["rows"])
+    r = partner.Review(issues=comments, strongest_counterargument="", ceo_questions=[],
+                       agrees_with_client_prior=False, prior_agreement_justified=True,
+                       verdict="approve")
+    text = partner.format_review(r)
+    assert "BLOCKING ISSUES (fix these):\n- none" in text and "conflates" in text
 
 
 def test_run_case_produces_judged_result(tmp_path):
@@ -341,7 +386,7 @@ def test_estimates_alone_cannot_settle_a_hypothesis(tmp_path):
 def test_synthesis_budget_stop_delivers_latest_draft_with_unresolved_points(tmp_path):
     class TightSynthesis(ScriptedLLM):
         def structured(self, role, msgs, schema):
-            if schema.__name__ == "Draft" and self.reviews >= 1:
+            if schema.__name__ in ("Draft", "StoryDraft") and self.reviews >= 1:
                 raise BudgetExceeded("tokens budget: scripted synthesis cap")
             return super().structured(role, msgs, schema)
     eng, ws, _ = engagement(tmp_path, TightSynthesis(), eid="tight")
