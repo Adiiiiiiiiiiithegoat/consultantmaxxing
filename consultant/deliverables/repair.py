@@ -11,7 +11,7 @@ import re
 from pydantic import BaseModel, Field
 
 from consultant.agents.storyliner import Draft
-from consultant.deliverables.validate import validate_draft
+from consultant.deliverables.validate import _known, validate_draft
 from consultant.llm import StructuredOutputError
 from consultant.tracing import BudgetExceeded
 
@@ -88,6 +88,9 @@ def _flags(ws, d: Draft) -> list[dict]:
 
 def repair(llm, ws, d: Draft, evidence: str, role: str = "storyliner") -> tuple[Draft, list[str]]:
     """Returns the repaired draft and a note per number removed as unverified."""
+    d = d.model_copy(deep=True)
+    for part in [*d.arguments, *d.slides]:  # a ref naming no evidence supports nothing
+        part.refs = [r for r in part.refs if _known(ws, r.strip())]
     flags = _flags(ws, d)
     if not flags:
         return d, []

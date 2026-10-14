@@ -210,6 +210,12 @@ def test_repair_pass_fixes_or_removes_every_flagged_number(tmp_path):
         assert d.slides[0].points == [f"costs from 19 to 22 crore ({UNVERIFIED})"]
         assert d.answer == bad.answer
 
-    # 3) a clean draft makes no call
+    # 3) a ref that names no evidence ("Open Questions" on the smoke re-run) is dropped
+    odd = good_draft()
+    odd.arguments[1].refs = ["S1", "Open Questions"]
+    d, removed = repair(FakeLLM({"fixes": []}), ws, odd, "e")
+    assert d.arguments[1].refs == ["S1"] and validate_draft(ws, d) == [] and removed == []
+
+    # 4) a clean draft makes no call
     llm = FakeLLM({"fixes": []})
     assert repair(llm, ws, good_draft(), "e") == (good_draft(), []) and llm.calls == 0
