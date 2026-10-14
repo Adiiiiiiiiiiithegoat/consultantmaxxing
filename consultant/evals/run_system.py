@@ -71,7 +71,9 @@ def run_case(llm, case: Case, root: Path, profile: str = "dev") -> dict:
     # replay the interview log so a resumed engagement's transcript is complete
     iv.log = ws.state.notes.get("interview_log", [])
     out = Engagement(llm, ws, interviewer=iv).run()
-    verdict = judge(llm, case, submission(iv, out["draft"], work=work_record(ws)))
+    sub = submission(iv, out["draft"], work=work_record(ws))
+    sub.tokens = out["tokens"]
+    verdict = judge(llm, case, sub)
     return {"case_id": case.id, "case_type": case.case_type, "code_version": code_version(),
             "stopped": out["stopped"], "scores": verdict.scores(),
             "overall": verdict.overall(), "verdict": verdict.model_dump(),

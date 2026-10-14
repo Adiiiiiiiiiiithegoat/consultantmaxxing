@@ -434,4 +434,6 @@ class Engagement:
             draft = storyliner.Draft(**ws.step("repair", lambda: self._repair(draft)))
         ws.save()
         ws.step("deliver", lambda: deliverables.render(ws, draft))
-        return {"stopped": stopped, "draft": draft, "deliverables": st.deliverables}
+        return {"stopped": stopped, "draft": draft, "deliverables": st.deliverables,
+                # this run's remote tokens (a resumed run counts only what it spent itself)
+                "tokens": self.investigate.spent["tokens"] + self.synthesis.spent["tokens"]}

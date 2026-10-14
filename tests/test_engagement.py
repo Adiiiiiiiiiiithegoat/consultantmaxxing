@@ -330,7 +330,7 @@ def test_partner_approves_clean_with_comments_and_blocks_every_planted_flaw(tmp_
 
 def test_run_case_produces_judged_result(tmp_path):
     from consultant.evals import run_system
-    from consultant.evals.judge import OUTCOME, PROCESS, RUBRIC
+    from consultant.evals.judge import MEASURED, OUTCOME, PROCESS, RUBRIC
 
     class Judged(ScriptedLLM):
         # process dims see the transcript + workspace; outcome dims see the answer only
@@ -344,7 +344,8 @@ def test_run_case_produces_judged_result(tmp_path):
             assert "Unhedged butter" in user and "CANDIDATE TRANSCRIPT" not in user
             assert "ISSUE TREE" not in user
             return {k: {"justification": "ok", "score": 3} for k in OUTCOME}
-    assert set(PROCESS) | set(OUTCOME) == set(RUBRIC) and not set(PROCESS) & set(OUTCOME)
+    groups = [set(PROCESS), set(OUTCOME), set(MEASURED)]
+    assert set().union(*groups) == set(RUBRIC) and sum(map(len, groups)) == len(RUBRIC)
     import consultant.agents.engagement_manager as em
     orig = em.Retriever.load
     em.Retriever.load = classmethod(lambda cls, *a, **k: cls([]))
@@ -352,7 +353,9 @@ def test_run_case_produces_judged_result(tmp_path):
         row = run_system.run_case(Judged(), BAKERY, tmp_path, "dev")
     finally:
         em.Retriever.load = orig
-    assert row["overall"] == 3 and row["case_id"] == BAKERY.id and not row["stopped"]
+    assert all(row["scores"][k] == 3 for k in PROCESS + OUTCOME)   # LLM-judged dims
+    assert "questions (reference interview" in row["verdict"]["efficiency"]["justification"]
+    assert row["case_id"] == BAKERY.id and not row["stopped"]
     assert row["code_version"]
     ws = Workspace.load(f"case-{BAKERY.id}", root=tmp_path)
     assert ws.state.notes["interview_log"]      # persisted for resume
@@ -507,6 +510,9 @@ def test_rejudge_rescores_a_finished_engagement_without_rerunning_it(tmp_path, m
     llm = Judge(4)
     monkeypatch.setattr(run_system, "LLM", lambda **k: llm)
     [new] = run_system.rejudge("sys")
-    assert new["overall"] == 4 and row["overall"] == 2
+    judged = PROCESS + OUTCOME
+    assert all(new["scores"][k] == 4 for k in judged) and all(row["scores"][k] == 2
+                                                              for k in judged)
+    assert new["scores"]["efficiency"] == row["scores"]["efficiency"]  # measured: unchanged
     assert set(llm.calls) == {"ProcessVerdict", "OutcomeVerdict"}   # judge calls only
     assert (tmp_path / "results" / "sys-rejudged" / f"{BAKERY.id}.json").exists()
