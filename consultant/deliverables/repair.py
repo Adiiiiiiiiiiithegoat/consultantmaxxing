@@ -19,15 +19,25 @@ UNVERIFIED = "[unverified figure]"
 
 REPAIR_SYS = (
     "You are the storyliner fixing a validation report. Each item below states a number that "
-    "is not in the evidence it cites. For each item return the corrected content with the "
-    "same fields: either cite the evidence id the number really comes from (it must appear "
-    "there exactly), or rewrite the sentence without that number. Change nothing else; never "
-    "add a new number that is not in the evidence.")
+    "is not in the evidence it cites. For each item return its 'where' and the corrected "
+    "fields (same field names as given): either cite the evidence id the number really comes "
+    "from (it must appear there exactly), or rewrite the sentence without that number. Change "
+    "nothing else; never add a new number that is not in the evidence.")
 
 
 class Fix(BaseModel):
+    """Flat on purpose: with a nested 'content' object gpt-oss-20b closed one brace too many
+    on every try. Give only the fields the item has."""
     where: str = Field(description="the item's 'where', exactly as given")
-    content: dict = Field(description="the corrected item, same fields as given")
+    text: str | None = None
+    title: str | None = None
+    action_title: str | None = None
+    points: list[str] | None = None
+    items: list[str] | None = None
+    refs: list[str] | None = None
+
+    def content(self) -> dict:
+        return {k: v for k, v in self.model_dump(exclude={"where"}).items() if v is not None}
 
 
 class Fixes(BaseModel):
@@ -94,7 +104,7 @@ def repair(llm, ws, d: Draft, evidence: str, role: str = "storyliner") -> tuple[
     flags = _flags(ws, d)
     if not flags:
         return d, []
-    items = [{"where": f["where"], "problem": f["detail"], "content": _get(d, f["where"])}
+    items = [{"where": f["where"], "problem": f["detail"], **_get(d, f["where"])}
              for f in flags]
     try:
         fixes = llm.structured(role, [
@@ -104,7 +114,7 @@ def repair(llm, ws, d: Draft, evidence: str, role: str = "storyliner") -> tuple[
         flagged = {f["where"] for f in flags}
         for fx in fixes.fixes:
             if fx.where in flagged:  # only flagged locations may change
-                d = _set(d, fx.where, fx.content)
+                d = _set(d, fx.where, fx.content())
     except (BudgetExceeded, StructuredOutputError):
         pass  # no budget or no usable fix: fall through to removal
     removed = []

@@ -192,9 +192,9 @@ def test_repair_pass_fixes_or_removes_every_flagged_number(tmp_path):
     # 1) the model re-cites the slide correctly, tries to edit an unflagged location and
     #    leaves the made-up number: only flagged parts change, the leftover is removed
     llm = FakeLLM({"fixes": [
-        {"where": "slide 1", "content": {"refs": ["F1", "F2", "A1"]}},
-        {"where": "argument 1", "content": {"title": "Rewritten!"}},
-        {"where": "argument 2", "content": {"text": "Still 43.6%."}}]})
+        {"where": "slide 1", "refs": ["F1", "F2", "A1"]},
+        {"where": "argument 1", "title": "Rewritten!"},
+        {"where": "argument 2", "text": "Still 43.6%."}]})
     d, removed = repair(llm, ws, bad, "evidence")
     assert d.slides[0].refs == ["F1", "F2", "A1"] and "15.79%" in d.slides[0].points[0]
     assert d.arguments[0].title == bad.arguments[0].title
