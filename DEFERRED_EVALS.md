@@ -78,6 +78,25 @@ Report the original 3 and the new 3 separately as well as together. Fact-finding
 `accuracy_heldout`; the 10 spot-checked questions in `consultant/evals/fact_questions_fresh.yaml`
 become the held-out set when that eval is next wired up.
 
+**Done 2026-10-14** (system 2.67 vs baseline 3.04; fixed-judge reference 2.63 vs 3.31, see
+PROGRESS.md). Superseded by the re-run below.
+
+**Re-run after the context-loss fixes (branch `fix-context-loss`).** System on the 6 studied
+train cases plus the next 6 in train order (p042, p044, p046, p049, p054, p056: nothing was
+developed against them). Baseline only on the new 6; the studied 6 reuse the baseline runs
+re-judged with the fixed judge (`baseline-train6-j2`, copied in). Same models config, fixed
+judge for everything. One line in a plain PowerShell terminal, resumable (rerun the same
+line after any stop):
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; New-Item -ItemType Directory -Force eval_results\baseline-train12 | Out-Null; Copy-Item eval_results\baseline-train6-j2\*.json eval_results\baseline-train12\; uv run consult eval system --split train --n 12 --name system-train12-v2 --profile claude; uv run consult eval baseline --split train --n 12 --name baseline-train12; uv run python -m consultant.evals.report --system system-train12-v2 --baseline baseline-train12 --split
+```
+The last command prints three tables: studied 6, untouched 6, combined. If the studied 6
+improve much more than the untouched 6, the fixes fitted the cases we read. Note: cases 7-12
+were in the simulator calibration set (the interviewer's matching, not the system); the new
+interview rules were checked on train cases 13+ only. Expected: system ~1.5-2 h (12 cases,
+fewer questions but a reconcile step and prompt replies), baseline ~15 min, judge 36 Opus
+calls; roughly one 5-hour window, so a limit wait is possible (calls wait and resume).
+
 ## 5. Phase 6: deliverables
 Gate ran offline (validator, live formulas, action titles). Deferred live check:
 | # | Check | Command | Pass criterion |

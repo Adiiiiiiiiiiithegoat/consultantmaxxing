@@ -281,7 +281,15 @@ following only the README; UI renders a live run; full test suite green.
 - [x] Claude via the Pro subscription: claude_cli provider, models.claude.yaml, claude budget profile
 - [x] `consult compare <problem.md> <human_answer.md>`: blinded A/B, judged separately
 - [x] Live: smoke call per model; one case-mode engagement measured (5m45s, ~140K tokens, ~4% of a 5-hour window)
-- [ ] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval (command in DEFERRED_EVALS.md)
+- [x] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval (command in DEFERRED_EVALS.md)
+- [x] Diagnose the 6-case result: context loss, format bias, over-asking; partner fixture cost lines
+- [x] Judge fix: whole answer to the outcome call, final answer to the process call; re-judge stored runs
+- [x] Full client replies to every agent (no truncation, merged duplicates, problem statement in the brief)
+- [x] Case interview as a conversation: answer prompts, client questions only, no repeats, stop after 2 stale replies
+- [x] Review loop keeps the previous draft's answer; ship the best-reviewed draft
+- [x] One reconciled decision model before synthesis; older analyses superseded
+- [x] Calibrated confidence, rounded numbers, one open-questions list, no ids in client text
+- [ ] Re-run on Claude: system on 12 train cases, baseline on the new 6; report studied vs untouched (command in DEFERRED_EVALS.md)
 - [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
 
 ## 6. Later (not in this build)

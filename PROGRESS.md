@@ -790,3 +790,61 @@ evidence and structure count. The system now wins only structure and hypotheses 
 old judge was flattering the system's process wins.
 - `report.py --split`: tables for the 6 studied cases, the untouched cases and both combined.
 - Offline suite green.
+
+### 2026-10-14: fixes 1-5 (branch `fix-context-loss`, step 2 of 3; offline only)
+Built against the 6 studied train cases' failure modes; nothing tuned on the test split.
+1. **Context loss.** A client reply is stored whole as the claim (no "Client, asked..."
+   prefix); a reply already on file returns the existing fact; `evidence_text` shows client
+   facts in full and never drops them (web facts still clipped to 220 chars, latest 60).
+   The brief, assessor, planner and partner get the problem as the client stated it.
+   Regression test: a 330-char, digit-free reply reaches the brief whole, stored once (fails
+   on the old code).
+2. **Interview as a conversation** (`agents/interview.py`, `_ask_client`). Deterministic
+   rules: `prompts_candidate` (the reply asks the candidate something or tells them what to
+   analyse next, e.g. "Sure, go ahead", "Let's focus on volume"), `search_style` (a web query,
+   never sent to the client), `repeats` (Jaccard >= 0.35 against questions already asked).
+   On a prompt, the EM answers with a structure/hypotheses and at most one question
+   (`RESPOND_SYS`, one LLM call per prompt). Two replies in a row with nothing new end the
+   interview (`STALE_STOP`); `max_questions` stays only as a ceiling. Case-mode planner and
+   assessor are told to write questions as speech and see what was already asked.
+   **Checked on real casebook interviews**: train cases 13-43 only (31 cases, not the 12 eval
+   cases), aggregates only, via `test_rules_hold_on_real_casebook_interviews` (skips without
+   local data). Prompt detector vs "the real candidate answered with substance next":
+   precision 0.87, recall 0.68 (most misses are data replies the candidate analysed
+   unprompted, i.e. not prompts). Search-style flags 2 of 291 real candidate turns, and all
+   16 search queries the system sent in the first Claude run. Repeat filter flags 1 of 291
+   real turns and 9 of the system's 72 questions. 0 of 31 real interviews had two
+   non-informative replies in a row before the end, so the stop rule wouldn't have cut any
+   real interview short. Live smoke: one Sonnet `CandidateTurn` call (answers the prompt with
+   hypotheses, then one data question).
+3. **Review loop.** Revisions get the previous draft and are told to keep its
+   recommendation unless a blocking issue shows the evidence contradicts it (a
+   counterargument alone never flips it). The reviewed draft with the fewest blocking issues
+   (then fewest critical, then the later one) ships; `notes.shipped_draft` records it and
+   `unresolved_review` is that draft's own blocking list. Regression test reproduces p033's
+   shape with synthetic content (6 / 3 / 1 critical + 5 blocking issues): draft 1 ships.
+4. **Reconciled decision model** (step `model`, before `story0`, synthesis budget). With 2+
+   successful analyses, the analyst builds one model: `inputs`, `assumptions` (each
+   modelling choice and why), `options`, `best`, `sensitivities` (the readings the earlier
+   analyses disagreed on). Earlier analyses get `superseded_by` and show in the brief as
+   "SUPERSEDED (don't cite)"; they stay in model.xlsx for audit. A failure leaves them as
+   they were.
+5. **Clean, calibrated answer.** Storyliner prompt + `skills/deliverables.md`: low
+   confidence only for a named gap that would flip the answer; numbers rounded to 2-3
+   significant figures; no evidence ids in prose; use the reconciled model. Rendering:
+   `answer_md` (memo body, and now the judge's final answer) strips id groups, renames ids
+   used as words ("in A4" -> "in the analysis"), rounds raw floats (`display_numbers`),
+   and merges the draft's and the engagement's open questions into one de-duplicated list.
+   The memo's ids move to a Sources section with readable labels. The validator accepts
+   display rounding to 2+ significant figures (42,500 for 42,525), not 1 (1,000 for 1,450
+   is still flagged). Confidence calibration is prompt-only; whether Sonnet follows it is
+   untested.
+- Tests changed by design (not weakened): the end-to-end step list gains `model`; the memo
+  test checks the Sources section instead of an inline "Rests on: F1, A1" and asserts the
+  answer body has no ids.
+- **Untested live:** everything above except the one smoke call. Risks: the prompt-reply
+  turn adds calls per case; the stop rule may end interviews early on cases whose first
+  questions miss; the reconcile step may fail on qualitative cases (it falls back to the
+  existing analyses).
+- Offline suite: 149 passed. Step 3 command: DEFERRED_EVALS.md ("Re-run after the
+  context-loss fixes").
