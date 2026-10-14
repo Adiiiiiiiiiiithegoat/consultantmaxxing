@@ -328,3 +328,22 @@ def test_duplicated_year_columns_and_headerless_rows():
     assert expand_table_fact(bare)[0].period == ""     # unverifiable column pick
     single = row.model_copy(update={"quote": "Net profit | 26,233", "header": ""})
     assert expand_table_fact(single) == [single]        # one value: nothing to mix up
+
+
+def test_verifier_retries_a_timed_out_refetch_but_not_a_404():
+    # fact-finding L&T: one ReadTimeout on the re-fetch failed 20 facts from one page
+    from consultant.research.verify import refetch
+    from consultant.research.web import Page
+
+    class FlakyWeb:
+        def __init__(self, errors):
+            self.errors, self.calls = list(errors), 0
+
+        def fetch(self, url, fresh=False):
+            self.calls += 1
+            err = self.errors.pop(0) if self.errors else None
+            return Page(url, "t", "" if err else "text", error=err)
+    web = FlakyWeb(["ReadTimeout('The read operation timed out')"])
+    assert refetch(web, "u", sleep=lambda s: None).error is None and web.calls == 2
+    web = FlakyWeb(["HTTPStatusError(\"Client error '404 Not Found'\")"])
+    assert refetch(web, "u", sleep=lambda s: None).error and web.calls == 1
