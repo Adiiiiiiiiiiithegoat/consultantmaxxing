@@ -44,6 +44,39 @@ def gate(system: list[dict], baseline: list[dict]) -> dict:
             "dimensions_won": wins, "pass": agg_s > agg_b and len(wins) >= 6}
 
 
+# The 6 train cases studied by hand on 2026-10-14 (diagnosis of the first Claude run). Fixes
+# were developed against these, so results on them are reported apart from untouched cases.
+STUDIED = ("iimb-p012-semiconductor-chip-manufacturer", "iimb-p017-indian-domestic-airline",
+           "iimb-p025-defence-sector", "iimb-p031-sustainability-strategy-for-fmcg",
+           "iimb-p033-packaging-manufacturer", "iimb-p039-port-operator")
+
+
+def table(system: list[dict], baseline: list[dict]) -> str:
+    """Per-dimension markdown table, system vs baseline, on the cases both have."""
+    common = {r["case_id"] for r in system} & {r["case_id"] for r in baseline}
+    s = [r for r in system if r["case_id"] in common]
+    b = [r for r in baseline if r["case_id"] in common]
+    if not common:
+        return "(no overlapping cases)"
+    ds, db = dims(s), dims(b)
+    rows = [f"| {k} | {ds[k]:.2f} | {db[k]:.2f} | {ds[k] - db[k]:+.2f} |" for k in RUBRIC]
+    os_, ob = (sum(r["overall"] for r in x) / len(x) for x in (s, b))
+    # ASCII header: printed to Windows consoles (cp1252)
+    return "\n".join([f"n = {len(common)}", "| Dimension | System | Baseline | Diff |",
+                      "|---|---|---|---|", *rows,
+                      f"| **overall** | **{os_:.2f}** | **{ob:.2f}** | **{os_ - ob:+.2f}** |"])
+
+
+def split_report(system: list[dict], baseline: list[dict]) -> str:
+    """Studied cases, untouched cases and all, each as its own table."""
+    groups = {"Studied 6 (fixes developed against these)": lambda r: r["case_id"] in STUDIED,
+              "Untouched cases": lambda r: r["case_id"] not in STUDIED,
+              "Combined": lambda r: True}
+    return "\n\n".join(f"### {name}\n" + table([r for r in system if keep(r)],
+                                                [r for r in baseline if keep(r)])
+                       for name, keep in groups.items())
+
+
 def failures(rows: list[dict]) -> Counter:
     c = Counter()
     for r in rows:
@@ -119,7 +152,13 @@ def main(argv=None):
     p.add_argument("--system", default="system-test")
     p.add_argument("--baseline", default="baseline")
     p.add_argument("--out", default=str(ROOT / "EVAL_REPORT.md"))
+    p.add_argument("--split", action="store_true", help="print studied / untouched / combined "
+                   "tables instead of writing the report")
     a = p.parse_args(argv)
+    if a.split:
+        r = ROOT / "eval_results"
+        print(split_report(load_rows(r, a.system), load_rows(r, a.baseline)))
+        return
     Path(a.out).write_text(render(a.system, a.baseline), encoding="utf-8")
     print(f"wrote {a.out}")
 

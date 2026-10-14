@@ -755,3 +755,38 @@ Measurement only, no system changes. Train split only.
   reviewed draft; one reconciled decision model; calibrated confidence and a cleaner final
   answer.
 - Offline suite: 130 passed.
+
+### 2026-10-14: judge fix + corrected reference (branch `fix-context-loss`, step 1 of 3)
+**Why the judge changed (rule 7: the gate was wrong, not the system).** Two measurement
+flaws found in the diagnosis above, both now fixed in `judge.py`:
+1. The outcome call clipped the final answer to 900 tokens (~2,700 chars, head + tail).
+   The system's answers are 6.7-8.6K chars, so the judge saw the recommendation and the
+   open questions/slide titles but none of the supporting arguments. Now `ANSWER_CLIP =
+   6000` tokens, the same for both sides, above every answer seen so far.
+2. The process call saw the transcript and work record only. The baseline keeps no work
+   record and does its maths in its answer, so correct maths scored 1 (p033). The process
+   call now also sees the final answer, for both sides. `test_run_case_produces_judged_result`
+   asserted the old design ("process must not see the answer"); the assertion now requires
+   the answer to be there. That's a deliberate design change, not a weakened test.
+Re-judged the stored runs with the fixed judge (no new engagements; Opus, 24 calls):
+`eval_results/system-train6-j2`, `eval_results/baseline-train6-j2`. **This is the new
+reference** (`report --split` prints it):
+
+| Dimension | System (old judge) | Baseline (old) | System (fixed) | Baseline (fixed) | Diff (fixed) |
+|---|---|---|---|---|---|
+| scoping | 3.00 | 3.50 | 2.83 | 3.67 | -0.83 |
+| structure | 3.33 | 1.50 | 3.33 | 2.83 | +0.50 |
+| hypotheses | 2.67 | 2.00 | 2.67 | 2.00 | +0.67 |
+| key_insight | 2.67 | 3.50 | 2.50 | 3.33 | -0.83 |
+| maths | 3.00 | 3.17 | 3.33 | 3.83 | -0.50 |
+| evidence | 2.50 | 1.83 | 2.50 | 2.67 | -0.17 |
+| recommendation | 2.33 | 3.50 | 2.33 | 3.50 | -1.17 |
+| communication | 3.00 | 4.00 | 2.67 | 3.67 | -1.00 |
+| efficiency | 1.50 | 4.33 | 1.50 | 4.33 | -2.83 |
+| **overall** | **2.67** | **3.04** | **2.63** | **3.31** | **-0.69** |
+
+The fix mostly helped the baseline: once the judge sees the baseline's answer, its maths,
+evidence and structure count. The system now wins only structure and hypotheses (2/9). The
+old judge was flattering the system's process wins.
+- `report.py --split`: tables for the 6 studied cases, the untouched cases and both combined.
+- Offline suite green.
