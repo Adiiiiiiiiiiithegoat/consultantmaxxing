@@ -40,6 +40,10 @@ def _matches(shown: str, pool: list[float]) -> bool:
     d = float(shown.replace(",", ""))
     decimals = len(shown.split(".")[1]) if "." in shown else 0
     half = 0.5 * 10 ** -decimals + 1e-9
+    digits = shown.replace(",", "").split(".")[0].lstrip("0")
+    zeros = len(digits) - len(digits.rstrip("0"))
+    if not decimals and zeros and len(digits) - zeros >= 2:
+        half = 0.5 * 10 ** zeros + 1e-9  # display rounding: 42,500 for 42,525 (2+ sig. figs)
     for v in pool:
         for cand in (v, v * 100, v / 100):           # 0.158 shown as 15.8%, and the reverse
             if abs(d - cand) <= half or (cand and abs(d - cand) / abs(cand) <= 0.005):

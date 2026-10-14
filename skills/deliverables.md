@@ -46,3 +46,13 @@ numbers.
 - Every number traces to a fact id, an analysis output or a labelled assumption.
 - Disclose material risks even when there is no mitigation; mark them as open.
 - State confidence and what new data would change the answer.
+
+## Calibrated confidence, clean text
+- Confidence is about whether the evidence settles the decision, not about how much more
+  could be learned. Low means a named missing fact would probably flip the answer; a gap
+  that would not change the recommendation belongs in the next steps, not in caveats.
+- Show numbers the way a reader takes them in: two or three significant figures, the exact
+  value staying in the model.
+- Evidence ids are the audit trail: they sit in the references, never in the sentences the
+  client reads.
+- One list of open questions, each asked once.

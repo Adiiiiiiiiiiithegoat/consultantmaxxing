@@ -1,6 +1,7 @@
 """Phase 6 gate (offline): number traceability, live spreadsheet formulas, action titles."""
 
 import json
+import re
 
 import pytest
 from openpyxl import load_workbook
@@ -270,7 +271,9 @@ def test_answer_must_commit_and_carry_the_answer_first_fields(tmp_path):
     assert any(i["kind"] == "unknown_ref" for i in validate_draft(ws, bad_ref))
     memo = render(ws, full) and (ws.dir / "deliverables/memo.md").read_text(encoding="utf-8")
     assert memo.index("**Recommendation:**") < memo.index("**Confidence: medium.**") \
-        < memo.index("**Rests on:** F1, A1") < memo.index("## Why")
+        < memo.index("## Why") < memo.index("## Sources") < memo.index("rests on: client")
+    answer = memo[:memo.index("## Sources")]           # client-facing: no evidence ids
+    assert not re.search(r"\b[FAS]\d+\b", answer)
 
 
 def test_deferring_draft_is_sent_back_and_the_repair_pass_commits_it(tmp_path):
@@ -353,3 +356,43 @@ def test_cited_fact_must_be_for_the_period_the_claim_states(tmp_path):
     fixed, removed = repair(NoBudget(), ws, d, "evidence")          # no budget: remove it
     assert fixed.slides[0].points == [f"FY24 gross margin {UNVERIFIED}"]
     assert removed == ["43.59 in slide 1 (cited evidence is for another period)"]
+
+
+def test_client_text_has_no_evidence_ids_and_rounds_raw_floats():
+    from consultant.deliverables import display_numbers, strip_refs
+    assert strip_refs("Outsourcing wins (A4, F5).") == "Outsourcing wins."
+    assert strip_refs("Costs rose [F3] while prices froze [F5, A1].") == \
+        "Costs rose while prices froze."
+    assert strip_refs("In A4, option B leads.") == "In the analysis, option B leads."
+    assert strip_refs("A1, A7 and A8 favour option A.") == "the analyses favour option A."
+    assert strip_refs("F2 and A5 agree.") == "the evidence agree."
+    keep = "FY24 margin; A-grade suppliers; S&P"
+    assert strip_refs(keep) == keep
+    assert display_numbers("break-even 0.36666666666666664") == "break-even 0.367"
+    assert display_numbers("adds 4.295454545454546% or INR 42525.0") == "adds 4.3% or INR 42525"
+    assert display_numbers("2.5x in FY2024, v1.0.3") == "2.5x in FY2024, v1.0.3"
+
+
+def test_validator_accepts_display_rounding_but_not_a_different_number():
+    pool = [42525.0, 0.36666666666666664, 4.295454545454546, 1450.0]
+    assert unsupported_numbers("about 42,500, or 0.37 (37%), adding 4.3%", pool) == []
+    assert unsupported_numbers("about 1,000", pool) == ["1,000"]     # 1 sig. fig.: not 1,450
+    assert unsupported_numbers("about 43,600", pool) == ["43,600"]
+
+
+def test_one_open_questions_list(tmp_path):
+    from consultant.deliverables import open_questions
+    ws = Workspace.create("oq", root=tmp_path)
+    ws.state.open_questions = ["What is the supplier's minimum order quantity?",
+                               "What minimum order quantity does the supplier set?",
+                               "How long is the typical delay?"]
+    d = good_draft().model_copy(update={"open_questions": ["How long is the typical delay?"]})
+    assert open_questions(ws, d) == ["How long is the typical delay?",
+                                     "What is the supplier's minimum order quantity?"]
+
+
+def test_storyliner_is_told_to_calibrate_confidence():
+    # prompt-level only: whether the model follows it is a live question (DEFERRED_EVALS)
+    from consultant.agents.storyliner import STORY_SYS
+    assert "low only when a specific missing fact would likely flip" in STORY_SYS
+    assert "never in the prose the client reads" in STORY_SYS

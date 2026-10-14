@@ -13,8 +13,9 @@ import json
 from pathlib import Path
 
 from consultant.agents.engagement_manager import Engagement, hypotheses_text
-from consultant.agents.storyliner import Draft, render_text
+from consultant.agents.storyliner import Draft
 from consultant.config import ROOT
+from consultant.deliverables import answer_md
 from consultant.evals.common import code_version
 from consultant.evals.judge import Submission, judge
 from consultant.evals.simulator import Interviewer
@@ -56,12 +57,15 @@ def final_draft(ws: Workspace) -> Draft:
     return Draft(**n[f"story{last}"])
 
 
-def submission(iv: Interviewer, draft: Draft, searches: int = 0, work: str = "") -> Submission:
+def submission(iv: Interviewer, ws: Workspace, draft: Draft, searches: int = 0,
+               work: str = "") -> Submission:
+    """The final answer is what the client reads (deliverables.answer_md: no evidence ids,
+    rounded numbers, one open-questions list), not the internal draft dump."""
     t = [{"role": "interviewer", "content": iv.opening()}]
     for e in iv.log:
         t += [{"role": "candidate", "content": e["question"]},
               {"role": "interviewer", "content": e["reply"]}]
-    return Submission(transcript=t, final_answer=render_text(draft),
+    return Submission(transcript=t, final_answer=answer_md(ws, draft),
                       questions_asked=len(iv.log), searches=searches, work=work)
 
 
@@ -71,7 +75,7 @@ def run_case(llm, case: Case, root: Path, profile: str = "dev") -> dict:
     # replay the interview log so a resumed engagement's transcript is complete
     iv.log = ws.state.notes.get("interview_log", [])
     out = Engagement(llm, ws, interviewer=iv).run()
-    sub = submission(iv, out["draft"], work=work_record(ws))
+    sub = submission(iv, ws, out["draft"], work=work_record(ws))
     sub.tokens = out["tokens"]
     verdict = judge(llm, case, sub)
     return {"case_id": case.id, "case_type": case.case_type, "code_version": code_version(),
@@ -129,7 +133,7 @@ def rejudge(name: str = "system-train", out: str | None = None) -> list[dict]:
             ws = Workspace.load(f"case-{case.id}", root=ROOT / "engagements" / name)
             iv = Interviewer(case, llm)
             iv.log = ws.state.notes.get("interview_log", [])
-            sub = submission(iv, final_draft(ws), work=work_record(ws))
+            sub = submission(iv, ws, final_draft(ws), work=work_record(ws))
         try:
             verdict = judge(llm, case, sub)
         except QuotaExhausted as e:

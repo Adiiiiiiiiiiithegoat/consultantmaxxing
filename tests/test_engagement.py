@@ -344,6 +344,8 @@ def test_run_case_produces_judged_result(tmp_path):
         def OutcomeVerdict(self, user):
             assert "Unhedged butter" in user and "CANDIDATE TRANSCRIPT" not in user
             assert "ISSUE TREE" not in user
+            answer = user.split("CANDIDATE FINAL ANSWER")[1]  # what the client reads
+            assert "**Recommendation:**" in answer and not re.search(r"\b[FAS]\d+\b", answer)
             return {k: {"justification": "ok", "score": 3} for k in OUTCOME}
     groups = [set(PROCESS), set(OUTCOME), set(MEASURED)]
     assert set().union(*groups) == set(RUBRIC) and sum(map(len, groups)) == len(RUBRIC)

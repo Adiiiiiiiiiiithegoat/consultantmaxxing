@@ -58,8 +58,18 @@ STORY_SYS = (
     "recommendation. Then a slide storyline whose action titles read as a story on their "
     "own. Use only the evidence given; committing means reasoning from it, never inventing "
     "figures: every number must appear in a cited fact (F#), analysis result (A#) or "
-    "labelled assumption (S#), copied exactly. Do not do arithmetic in text: if a number "
-    "isn't in the evidence, don't state it.\n\nHOUSE STYLE:\n")
+    "labelled assumption (S#). Round it for reading (2-3 significant figures: 0.36666 -> "
+    "0.37 or 37%, 42525.0 -> 42,525) but never change its value otherwise. Do not do "
+    "arithmetic in text: if a number isn't in the evidence, don't state it. If there is a "
+    "RECONCILED DECISION MODEL, its numbers are the ones to use; never cite a superseded "
+    "analysis. Evidence ids go only in refs and key_evidence, never in the prose the client "
+    "reads.\nCONFIDENCE: high when the evidence settles the question; medium when it supports "
+    "the answer but a named, plausible finding could change it; low only when a specific "
+    "missing fact would likely flip the recommendation (name it). In a case interview the "
+    "client's data is the evidence base: what the client doesn't have lowers confidence only "
+    "if it would change the answer. Data worth collecting that wouldn't change the answer "
+    "goes in next steps, not in the confidence or the caveats. One list of open questions, "
+    "no repeats.\n\nHOUSE STYLE:\n")
 
 
 REVISE = (
