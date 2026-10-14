@@ -183,3 +183,14 @@ def test_compare_blinds_both_answers_identically_and_judges_each_fresh(tmp_path,
                                    for role, _, kw in calls)
     assert sum("ANSWER A" in c for _, c, _ in calls) == 1   # each call sees one answer only
     assert res[mapping["A"]]["label"] == "A" and res["system"]["total"] == 4
+
+
+def test_a_failed_call_says_why():
+    ok = stream("ok_haiku.jsonl")
+    with pytest.raises(cc.CLIError, match=r"subtype=success is_error=False exit=1.*stderr='boom'"):
+        cc.parse(ok, "boom", 1)          # a reply but a non-zero exit: report both
+    bad = ok.replace('"is_error": false', '"is_error": true')
+    with pytest.raises(cc.CLIError, match=r"is_error=True exit=0.*reply='OK'"):
+        cc.parse(bad, "", 0)
+    with pytest.raises(cc.CLIError, match="no result event"):
+        cc.parse("", "", 0)

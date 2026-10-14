@@ -92,8 +92,10 @@ def parse(stdout: str, stderr: str = "", returncode: int = 0) -> CLIResult:
     failed = result is None or bool(result.get("is_error")) or returncode != 0
     if failed and (rejected or _LIMIT.search(text) or _LIMIT.search(stderr)):
         raise UsageLimit(text or stderr[-300:] or "usage limit reached")
-    if failed:
-        raise CLIError((text or stderr[-500:] or f"exit {returncode}, no result").strip())
+    if failed:  # say why it counted as a failure: one live call failed with a valid-looking reply
+        why = (f"subtype={(result or {}).get('subtype', 'no result event')} "
+               f"is_error={(result or {}).get('is_error')} exit={returncode}")
+        raise CLIError(f"{why}; stderr={stderr.strip()[-300:]!r}; reply={text.strip()[:300]!r}")
     u = result.get("usage") or {}
     cache_w, cache_r = u.get("cache_creation_input_tokens", 0), u.get("cache_read_input_tokens", 0)
     prompt = u.get("input_tokens", 0) + cache_w + cache_r
