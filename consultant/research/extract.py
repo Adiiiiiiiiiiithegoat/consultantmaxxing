@@ -7,7 +7,7 @@ import unicodedata
 
 from pydantic import BaseModel, Field
 
-from consultant.llm import LLM
+from consultant.llm import LLM, StructuredOutputError
 from consultant.research.web import Page
 
 CHUNK, OVERLAP, TOP_CHUNKS = 2500, 300, 3
@@ -46,8 +46,16 @@ EXTRACT_SYS = (
     "years. Return at most 5 facts; return an empty list if nothing is relevant.")
 
 
+_EMPTY_CELLS = re.compile(r"\|(?:[ \t]*\|)+")  # "|  |  |  |" runs in scraped tables
+
+
+def collapse_cells(text: str) -> str:
+    """Runs of empty table cells add nothing and make small models loop copying them."""
+    return _EMPTY_CELLS.sub("|", text)
+
+
 def norm(text: str) -> str:
-    text = unicodedata.normalize("NFKC", text).lower()
+    text = collapse_cells(unicodedata.normalize("NFKC", text)).lower()
     text = text.replace("’", "'").replace("‘", "'").replace("“", '"')
     text = text.replace("”", '"').replace("–", "-").replace("—", "-")
     return re.sub(r"\s+", " ", text).strip()
@@ -174,39 +182,51 @@ def find_header(text: str, quote: str) -> str:
 def expand_table_fact(f: PageFact) -> list[PageFact]:
     """A multi-year table row + its verified header -> one fact per year, aligned by position
     from the right (leading extra cells are TTM/latest columns). Small models often pick the
-    wrong column; this removes that choice. No expansion if the counts don't line up."""
-    if not (is_table_like(f.quote) and is_table_like(f.header, 1)) or \
-            norm(f.header) == norm(f.quote):
+    wrong column; this removes that choice. No expansion if the counts don't line up.
+    A multi-value row whose header can't be verified keeps no period: the model's column
+    pick is a guess (it labelled an FY26 cell FY2023-24)."""
+    values = numbers_in(re.sub(r"\((?:[ivxl+\s]+)\)", " ", f.quote, flags=re.I))  # drop (I+II)
+    unverified = not f.header or norm(f.header) == norm(f.quote)
+    if is_table_like(f.quote) and len(values) >= 2 and unverified:
+        return [f.model_copy(update={"period": ""})]
+    if not (is_table_like(f.quote) and is_table_like(f.header, 1)) or unverified:
         return [f]
     years = header_years(f.header)
-    values = numbers_in(re.sub(r"\((?:[ivxl+\s]+)\)", " ", f.quote, flags=re.I))  # drop (I+II)
-    if len(years) < 2 or len(set(years)) != len(years) or \
-            not 0 <= len(values) - len(years) <= 1:  # at most one extra (TTM) cell
+    if len(years) < 2 or not 0 <= len(values) - len(years) <= 1:  # at most one extra (TTM)
         return [f]
-    pairs = zip(years, values[-len(years):], strict=True)
+    by_year: dict[str, set[float]] = {}
+    for y, v in zip(years, values[-len(years):], strict=True):
+        by_year.setdefault(y, set()).add(v)
+    if any(len(vs) > 1 for vs in by_year.values()):  # e.g. quarter and year columns
+        return [f]                                   # share a year: ambiguous, don't guess
     return [f.model_copy(update={"value": v, "period": y,
                                  "claim": f"{f.metric} for {y}: {v} {f.unit} ({f.entity})"})
-            for y, v in pairs]
+            for y, (v,) in by_year.items()]
 
 
 def extract_facts(llm: LLM, page: Page, question: str,
                   role: str = "extractor") -> tuple[list[PageFact], int]:
     """Returns (validated facts, number rejected by validation)."""
     kept, rejected = [], 0
-    for chunk in chunks(page.text, question):
+    text = collapse_cells(page.text)
+    for chunk in chunks(text, question):
         msgs = [{"role": "system", "content": EXTRACT_SYS},
                 {"role": "user", "content": f"QUESTION: {question}\nSOURCE: {page.title} "
                                             f"({page.url})\n\nEXCERPT:\n{chunk}"}]
-        for f in llm.structured(role, msgs, PageFacts).facts:
-            ok = quote_in_text(f.quote, page.text) and (
+        try:
+            found = llm.structured(role, msgs, PageFacts).facts
+        except StructuredOutputError:
+            continue  # one unreadable chunk shouldn't sink the page (or the run)
+        for f in found:
+            ok = quote_in_text(f.quote, text) and (
                 f.value is None or value_in_quote(f.value, f.quote))
             if not ok:
                 rejected += 1
                 continue
-            if f.header and not quote_in_text(f.header, page.text):
+            if f.header and not quote_in_text(f.header, text):
                 f.header = ""  # unverifiable context is dropped, not trusted
             if not f.header and is_table_like(f.quote):
-                f.header = find_header(page.text, f.quote)
+                f.header = find_header(text, f.quote)
             for g in expand_table_fact(f):
                 if not any(norm(g.quote) == norm(k.quote) and g.value == k.value
                            and g.period == k.period for k in kept):

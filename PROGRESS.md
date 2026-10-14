@@ -538,3 +538,22 @@ uv run consult eval backtests && uv run consult report                  # EVAL_R
 - `consult eval tokens` now divides by the number of keys: Phase 7 on the current plan is
   ≥0.4 days for 5 cases and ≥0.9 days for 15 (token-bound; previously 1.1 / 2.7).
 - The pinned baseline worktree runs pre-rotation code: keep a single key in its `.env`.
+
+### 2026-10-14: overnight live gate runs (branch `overnight-fixes`, free tier)
+Ran the four live checks with `CONSULTANT_MODELS_FILE=models.overnight.yaml` (120b roles on
+gpt-oss-20b, reasoning low; partner/judge qwen3.8-27b; extractor local qwen3:4b). Full
+detail, per-fix diagnosis and open decisions: **MORNING_REPORT.md**.
+- Smoke `smoke-asianpaints-2` resumed to complete deliverables (2 genuine validator flags
+  remain: the dev synthesis budget ran out before a revision).
+- 5.1 `eval system --split train --n 3`: 3/3 complete within budget, all artefacts. Judge
+  overall 1.41/5: low; see report.
+- 2.1-2.3 `eval facts`: accuracy 75%, verifier 0.993, unsourced 0. Passes.
+- 5.2 `eval partner`: 5/5 caught. The clean draft was rejected because the fixture's numbers
+  are inconsistent (logged, not changed).
+- Fixes (all with offline tests): estimator formula validation; validator FY-label and
+  "(1)" list false positives; structured output salvages Groq `failed_generation`, says when a
+  reply was truncated, trims over-long lists; failed analysis non-fatal; synthesis gets the
+  reserve plus unspent investigation tokens; extractor collapses empty table cells and
+  survives a bad chunk; brief sees quotes and titles; table rows with duplicated year
+  columns / no verified header; verifier retries transient re-fetch errors.
+- Offline suite: 109 passed.

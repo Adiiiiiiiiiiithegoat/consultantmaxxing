@@ -1,0 +1,84 @@
+# OVERNIGHT routing (CONSULTANT_MODELS_FILE=models.overnight.yaml): models.yaml with every
+# gpt-oss-120b role moved to gpt-oss-20b (120b stays reserved/blocked). Partner and judge
+# stay on qwen3.8-27b (different family from the writer), which also spreads the quota.
+# Writers on 20b use reasoning_effort low (as models.small.yaml): medium spent 1.6-2.9K
+# completion tokens per draft and blew the dev synthesis budget on all 3 train cases.
+# Model routing. Code never names a model; it asks for a role.
+# Swap a role to Claude/OpenAI by changing its `model` to e.g. anthropic/claude-sonnet-5-5.
+#
+# Checked 2026-10-13 against GET /openai/v1/models + x-ratelimit headers on this account.
+# Groq free tier (per model, per org): gpt-oss-120b / gpt-oss-20b / qwen3.8-27b each
+# 30 RPM, 1K RPD, 8K TPM, 200K TPD. Each model has its own quota, so roles are spread.
+# Limits below are per key (per Groq org): with several comma-separated keys in
+# GROQ_API_KEY the client keeps separate limiter state per key and rotates.
+# 8K TPM also caps a single request: prompt + max_tokens must fit under it.
+# qwen3.8-27b also has an undocumented 1K output-tokens/min (OTPM) cap. Groq checks it at
+# admission against an estimate taken from recent reply lengths, so once a reply runs past 1K,
+# every later request is refused until max_tokens <= 1000. Hence max_output: 1000 (the client
+# clamps to it). Keep qwen roles to short outputs.
+# qwen3.8-27b on Groq emits no reasoning whatever reasoning_effort says, so it's set to none.
+
+providers:
+  groq:
+    base_url: https://api.groq.com/openai/v1
+    api_key_env: GROQ_API_KEY
+  ollama:
+    base_url: ${OLLAMA_BASE_URL:-http://localhost:11434}/v1
+    api_key: ollama              # Ollama ignores it; the client needs a value
+    local: true                  # free: not charged to run budgets (still traced)
+  anthropic:                     # OpenAI-compatible endpoint; untested until a key exists
+    base_url: https://api.anthropic.com/v1
+    api_key_env: ANTHROPIC_API_KEY
+  openai:                        # untested until a key exists
+    base_url: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+
+# Per-model limits. Omitted keys = unlimited (local models).
+models:
+  groq/openai/gpt-oss-120b: {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, context: 131072}
+  groq/openai/gpt-oss-20b:  {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, context: 131072}
+  groq/qwen/qwen3.8-27b:    {rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000, otpm: 1000, max_output: 1000,
+                             context: 131072}
+  ollama/qwen3:4b-instruct: {context: 32768}   # non-thinking build; plain qwen3:4b always thinks
+
+# role -> model + default params. `fallback` (model + param overrides) is used when the
+# primary's daily quota is gone or its server is unreachable.
+roles:
+  engagement_manager:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: low}
+  storyliner:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.4, max_tokens: 3000, reasoning_effort: low}
+  research_associate:
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.2, max_tokens: 1500, reasoning_effort: low}
+    fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
+  analyst:
+    model: groq/qwen/qwen3.8-27b
+    params: {temperature: 0.1, max_tokens: 1000, reasoning_effort: none}
+  partner:                       # different family from the writer (gpt-oss-120b)
+    model: groq/qwen/qwen3.8-27b
+    params: {temperature: 0.3, max_tokens: 1000, reasoning_effort: none}
+  extractor:
+    model: ollama/qwen3:4b-instruct
+    params: {temperature: 0.0, max_tokens: 2000}
+    fallback: {model: groq/openai/gpt-oss-20b, params: {reasoning_effort: low}}
+  judge:                         # eval only; different family from the writer
+    model: groq/qwen/qwen3.8-27b
+    params: {temperature: 0.0, max_tokens: 1000, reasoning_effort: none}
+
+  # ---- build-time / eval-only roles ----
+  case_extractor:                # one-off casebook annotation; alternates with _alt to split quota.
+    model: groq/openai/gpt-oss-20b   # no fallback: gpt-oss-20b mislabels turns and invents
+    params: {temperature: 0.0, max_tokens: 3000, reasoning_effort: low}
+  case_extractor_alt:
+    model: groq/qwen/qwen3.8-27b
+    params: {temperature: 0.0, max_tokens: 1000, reasoning_effort: none}
+  interviewer:                   # case-mode simulator: matches questions to case data
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.0, max_tokens: 1200, reasoning_effort: medium}  # low flip-flopped
+    fallback: {model: ollama/qwen3:4b-instruct, params: {reasoning_effort: null}}
+  baseline:                      # plain single-model consultant; same model as the EM for fairness
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: low}

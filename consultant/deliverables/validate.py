@@ -10,6 +10,8 @@ from consultant.research.extract import numbers_in
 
 _NUM = re.compile(r"(?<![\w.])(\d[\d,]*(?:\.\d+)?)(?![\w])")
 _REFS = re.compile(r"\b[FAS]\d+\b")
+# fiscal-year labels (FY24, FY'24, FY2023-24, FY22‑23) name a period; they aren't data
+_FY = re.compile(r"\bFY\s*['’]?\d{2,4}(?:\s*[-–—‑‐/]\s*\d{2,4})?\b", re.I)
 GENERIC_TITLES = {"overview", "introduction", "background", "summary", "analysis",
                   "recommendation", "recommendations", "next steps", "agenda", "appendix"}
 
@@ -47,7 +49,7 @@ def _matches(shown: str, pool: list[float]) -> bool:
 def _strip_enumeration(text: str) -> str:
     """Remove list markers only when they count 1, 2, 3... so a real '2.' isn't skipped."""
     out, expected, last = [], 1, 0
-    for m in re.finditer(r"(?:^|(?<=\s))(\d{1,2})[.)]\s+(?=[A-Za-z])", text):
+    for m in re.finditer(r"(?:^|(?<=\s))\(?(\d{1,2})[.)]\s+(?=[A-Za-z])", text):
         if int(m.group(1)) == expected:
             out.append(text[last:m.start()])
             last, expected = m.end(), expected + 1
@@ -55,7 +57,7 @@ def _strip_enumeration(text: str) -> str:
 
 
 def unsupported_numbers(text: str, pool: list[float]) -> list[str]:
-    text = _strip_enumeration(_REFS.sub(" ", text))
+    text = _strip_enumeration(_FY.sub(" ", _REFS.sub(" ", text)))
     out = []
     for m in _NUM.finditer(text):
         s = m.group(1)

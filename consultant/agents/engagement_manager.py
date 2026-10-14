@@ -24,6 +24,7 @@ from consultant.deliverables.validate import validate_draft
 from consultant.knowledge import playbooks
 from consultant.knowledge.retrieval import Retriever, add_primer
 from consultant.knowledge.schema import CaseType
+from consultant.llm import StructuredOutputError
 from consultant.research.extract import extract_facts
 from consultant.research.fact_store import Fact
 from consultant.research.verify import verify_facts
@@ -156,6 +157,8 @@ class Engagement:
                                    "calls": self.prof["max_calls"],
                                    "searches": self.prof["max_searches"],
                                    "pages": self.prof["max_pages"]})
+        # synthesis is guaranteed the rest of the cap; it also gets whatever investigation
+        # leaves unspent (set in run(), once investigation is over)
         self.synthesis = Budget({"tokens": cap - int(cap * INVESTIGATE_SHARE)})
         if ws.state.mode == "case" and interviewer is None:
             raise ValueError("case mode needs an interviewer (the simulated client)")
@@ -299,7 +302,10 @@ class Engagement:
                                                 branch_id=h.branch_id, priority=h.priority))
                 pending[h.id] = h.questions
         for req in a.analyses_needed:
-            analyst.analyse(self.llm, self.ws, req, [h.id for h in open_h])
+            try:
+                analyst.analyse(self.llm, self.ws, req, [h.id for h in open_h])
+            except StructuredOutputError as e:  # one failed analysis isn't fatal
+                self.ws.decide("analyst", f"analysis failed: {req[:120]}", str(e))
         resolved = all(h.status in ("supported", "killed") for h in st.hypotheses
                        if h.priority == 1)
         return {"next_questions": a.next_questions, "done": a.done or resolved}
@@ -365,6 +371,12 @@ class Engagement:
         if st.mode == "real" and self.web is not None:
             ws.step("verify", self._finalise_real_mode)
         draft, rv = None, None
+        # ponytail: spend is noted per run; a run killed mid-investigation (quota) isn't counted
+        st.notes["investigate_tokens"] = (st.notes.get("investigate_tokens", 0)
+                                          + self.investigate.spent["tokens"])
+        self.synthesis.limits["tokens"] = max(self.synthesis.limits["tokens"],
+                                              self.prof["max_tokens"]
+                                              - st.notes["investigate_tokens"])
         with self.llm.scoped(self.synthesis):
             try:
                 draft = storyliner.Draft(**ws.step(

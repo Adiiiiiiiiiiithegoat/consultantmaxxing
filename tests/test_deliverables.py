@@ -144,6 +144,10 @@ def test_engagement_validator_forces_revision_when_partner_approves(tmp_path):
 
 def test_enumeration_only_skips_counting_sequences():
     assert unsupported_numbers("Revenue grew by 2. Then it fell.", [9.0]) == ["2"]
+    # smoke-asianpaints-2 false positives: "(1) ... (2) ..." lists and fiscal-year labels
+    assert unsupported_numbers("prioritize (1) pricing, (2) mix, (3) costs", [9.0]) == []
+    assert unsupported_numbers("FY22‑23 vs FY24-25, FY'24 and FY2023-24", [9.0]) == []
+    assert unsupported_numbers("FY24 margin was 23", [9.0]) == ["23"]  # data still checked
 
 
 def test_formula_that_hardcodes_an_input_is_rejected(tmp_path):

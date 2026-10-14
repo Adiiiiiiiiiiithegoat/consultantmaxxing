@@ -6,7 +6,7 @@ import ast
 import operator
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from consultant.llm import LLM
 from consultant.research.fact_store import Assumption, FactStore
@@ -25,6 +25,12 @@ class EstimatePlan(BaseModel):
     factors: list[Factor]
     formula: str = Field(description="arithmetic over factor names only, e.g. a * b / c")
     unit: str
+
+    @model_validator(mode="after")
+    def _formula_evaluates(self):
+        # checked here so a bad formula goes back to the model as a validation error (retry)
+        safe_eval(self.formula, {f.name: f.value for f in self.factors})
+        return self
 
 
 class Estimate(BaseModel):
@@ -54,7 +60,14 @@ def safe_eval(formula: str, names: dict[str, float]) -> float:
         if isinstance(node, ast.UnaryOp) and type(node.op) in _OPS:
             return _OPS[type(node.op)](ev(node.operand))
         raise ValueError(f"disallowed expression element: {ast.dump(node)[:80]}")
-    return float(ev(ast.parse(formula, mode="eval")))
+    expr = formula.split("=")[-1] if formula.count("=") == 1 else formula  # "x = a - b"
+    try:
+        tree = ast.parse(expr.strip(), mode="eval")
+    except SyntaxError as e:
+        raise ValueError(f"formula is not a single arithmetic expression: {formula!r}") from e
+    if missing := {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)} - names.keys():
+        raise ValueError(f"formula uses names that are not factors: {sorted(missing)}")
+    return float(ev(tree))
 
 
 EST_SYS = ("Build a transparent estimate for the question. Break it into 3-7 factors; use the "

@@ -261,6 +261,15 @@ iterations), re-running the eval each time, before escalating to the user.
 **Gate:** fresh clone → setup → `consult new` completes a dev-profile engagement
 following only the README; UI renders a live run; full test suite green.
 
+### Live gate runs on the free tier (overnight 2026-10-14, branch overnight-fixes)
+- [x] Resume smoke-asianpaints-2 through to complete deliverables
+- [x] `consult eval system --split train --n 3`: 3/3 within budget, all artefacts
+- [x] `consult eval facts`: accuracy 75%, verifier 0.99, unsourced 0
+- [x] `consult eval partner`: 5/5 seeded flaws caught
+- [ ] Decide: fix the inconsistent clean draft in `partner_seeded.yaml` (partner rightly rejects it)
+- [ ] Decide: dev synthesis reserve vs validator-only revision pass (smoke draft kept 2 flags)
+- [ ] Decide: should the judge's submission include the tree, hypotheses and analyses
+
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain
 - Use the consultant as a simulated expert persona for product testing

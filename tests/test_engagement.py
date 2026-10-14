@@ -137,6 +137,18 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     assert "## Answer" in memo and "Unhedged butter costs" in memo and "## Risks" in memo
 
 
+
+def test_failed_analysis_does_not_crash_the_engagement(tmp_path):
+    from consultant.llm import StructuredOutputError
+
+    class BadAnalyst(ScriptedLLM):
+        def AnalysisCode(self, user):
+            raise StructuredOutputError("analyst: no valid AnalysisCode after 3 tries")
+    eng, ws, _ = engagement(tmp_path, BadAnalyst())
+    eng.run()
+    assert "deliver" in ws.state.steps_done and not ws.state.analyses
+    assert any("analysis failed" in d.decision for d in ws.state.decisions)
+
 def test_resume_after_completion_makes_no_llm_calls(tmp_path):
     eng, ws, _ = engagement(tmp_path, ScriptedLLM())
     eng.run()
@@ -330,6 +342,20 @@ def test_synthesis_budget_stop_delivers_latest_draft_with_unresolved_points(tmp_
     assert "Unresolved review points" in memo and "no number" in memo
     assert any("Synthesis stopped" in q for q in ws.state.open_questions)
 
+
+
+def test_synthesis_gets_the_reserve_plus_unspent_investigation_tokens(tmp_path):
+    # system-train: investigation used 23-34K of its 42K share while synthesis stopped at its
+    # fixed 18K, though the runs were far under the 60K run cap
+    cap = 60000
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM(), eid="lend")
+    eng.investigate.charge("tokens", 25000)
+    eng.run()
+    assert eng.synthesis.limits["tokens"] == cap - 25000      # total still capped at 60K
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM(), eid="reserve")
+    eng.investigate.charge("tokens", 50000)
+    eng.run()
+    assert eng.synthesis.limits["tokens"] == cap - int(cap * 0.7)  # reserve always kept
 
 def test_research_questions_get_engagement_context(tmp_path, monkeypatch):
     import consultant.agents.engagement_manager as em

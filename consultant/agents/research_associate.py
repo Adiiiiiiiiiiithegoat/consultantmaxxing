@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from consultant.llm import LLM
+from consultant.llm import LLM, StructuredOutputError
 from consultant.research.credibility import classify, credibility, domain
 from consultant.research.estimate import Estimate, estimate
 from consultant.research.extract import extract_facts
@@ -91,9 +91,12 @@ def facts_table(facts: list[Fact], question: str = "") -> str:
         return (period_flag(f, question) != "", -f.credibility)
     rows = []
     for f in sorted(facts, key=rank)[:MAX_FACTS_SHOWN]:
+        # the verbatim quote and page title let the reader catch an extractor mislabel
+        # (a quarter labelled as the year, a balance-sheet total labelled as profit)
         row = (f"[F{f.id}] {f.claim} | value={f.value} {f.unit} | "
                f"period={f.period}{period_flag(f, question)} | "
-               f"{f.source_type} {domain(f.source_url)}")
+               f"{f.source_type} {domain(f.source_url)} \"{f.source_title[:70]}\" | "
+               f"quote: \"{' '.join(f.quote.split())[:160]}\"")
         if f.header:
             row += f" | table header: {f.header[:200]}"
         rows.append(row)
@@ -215,7 +218,7 @@ class ResearchAssociate:
                 try:
                     est = estimate(self.llm, self.store, self.engagement_id, question,
                                    facts_table(facts, question), self.role)
-                except BudgetExceeded:
-                    est = None  # out of budget: the brief already says what's missing
+                except (BudgetExceeded, StructuredOutputError):
+                    est = None  # out of budget or no usable plan: the brief says what's missing
         return ResearchResult(question, brief, facts, triangulate(facts), est,
                               dict(budget.spent), rejected)
