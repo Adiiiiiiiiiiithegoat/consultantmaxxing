@@ -2,6 +2,9 @@
 # NOT used by any code, not run, and never to be used while developing: once checked, they
 # replace the current biased held-out half (see fact_questions.yaml) as the honest measure.
 #
+# SPOT-CHECKED 2026-10-14: all 10 answers confirmed against the listed (or replacement) source;
+# see each `verified` line. Still never use these while developing.
+#
 # How the answers were found: web search on 2026-10-14; `source` is the document the figure
 # comes from (primary where one was found). I did not open every primary PDF myself, so
 # `confidence` says how directly the figure was confirmed. Please check each `source` and fix
@@ -20,6 +23,7 @@ questions:
     source_type: primary (government)
     confidence: high
     caveat: "a Feb 2025 PIB note restates it as USD 437.10 billion (inside tol)"
+    verified: "2026-10-14: source PDF states 'USD 437.06 Billion' for FY 2023-24"
   - id: gst_gross_fy24
     question: "What was India's gross GST collection in FY2023-24, in rupees?"
     answer: 2.018e+13
@@ -28,8 +32,9 @@ questions:
     as_written: "Rs 20.18 lakh crore (CGST 3,75,710 + SGST 4,71,195 + IGST 10,26,790 + cess 1,44,554 crore = 20,18,249 crore)"
     source: https://www.taxheal.com/?p=95718
     source_type: secondary (reproduces the Finance Ministry release of 1 Apr 2024)
-    confidence: medium
+    confidence: high
     caveat: "one outlet reports Rs 20.14 lakh crore (inside tol); the PIB original wasn't found"
+    verified: "2026-10-14: Rs 20.18 lakh crore confirmed by DD News (ddindia.co.in/2024/04/gst-revenue-surpasses-rs-20-trillion-in-2023-24-marking-11-7-growth/); components sum to 20,18,249 crore"
   - id: twowheeler_sales_fy24
     question: "How many two-wheelers were sold in India's domestic market in FY2023-24 (SIAM)?"
     answer: 17974365
@@ -40,6 +45,7 @@ questions:
     source_type: secondary (SIAM annual release)
     confidence: high
     caveat: "none known"
+    verified: "2026-10-14: source states '1,79,74,365 units in April - March 2024'"
   - id: forex_reserves_mar2024
     question: "What were India's foreign exchange reserves as of 29 March 2024, in US dollars?"
     answer: 6.45583e+11
@@ -48,18 +54,20 @@ questions:
     as_written: "US$ 645,583 million (RBI Weekly Statistical Supplement, 5 Apr 2024)"
     source: https://www.rbi.org.in/Scripts/WSSView.aspx?Id=26794
     source_type: primary (RBI)
-    confidence: medium
-    caveat: "confirm the WSS Id is the 5 Apr 2024 issue (search results for this page mixed in 2025 issues)"
+    confidence: high
+    caveat: "none; WSS Id 26794 confirmed as the 5 Apr 2024 issue"
+    verified: "2026-10-14: RBI WSS dated 5 Apr 2024 gives US$ 645,583 million for week ended 29 Mar 2024"
   - id: major_ports_cargo_fy24
     question: "How much cargo did India's major ports handle in FY2023-24, in tonnes?"
     answer: 8.1923e+08
     unit: tonnes
     tol: 0.01
     as_written: "819.23 million tonnes (Rajya Sabha answer, 4 Feb 2025)"
-    source: https://rsdebate.nic.in/bitstream/123456789/758011/1/PQ_267_04022025_U311_p567_p567.pdf
-    source_type: primary (Parliament answer)
+    source: https://indianinfrastructure.com/2024/04/22/indian-major-ports-handle-819-23-mt-of-cargo-during-fy-2024/
+    source_type: secondary (reports Indian Ports Association data); Rajya Sabha PQ 267 of 4 Feb 2025 gives the same figure but its rsdebate.nic.in link now redirects
     confidence: medium
     caveat: "a ministry-sourced dataset (dataful.in) gives 819.29 MT (inside tol)"
+    verified: "2026-10-14: 819.23 million tonnes confirmed (Indian Ports Association via Indian Infrastructure)"
   - id: kotak_pat_fy24
     question: "What was Kotak Mahindra Bank's standalone net profit for FY2023-24, in rupees?"
     answer: 1.3782e+11
@@ -70,6 +78,7 @@ questions:
     source_type: primary (company release, 4 May 2024)
     confidence: high
     caveat: "the question must say standalone; consolidated is very different"
+    verified: "2026-10-14: release (now at kotak.bank.in) states standalone PAT Rs 13,782 crore, consolidated Rs 18,213 crore"
   - id: tatasteel_rev_fy24
     question: "What was Tata Steel's consolidated revenue from operations for FY2023-24, in rupees?"
     answer: 2.29171e+12
@@ -80,26 +89,29 @@ questions:
     source_type: primary (company release)
     confidence: high
     caveat: "total income (Rs 2,30,980 crore) is within 1%, so it would also pass at tol 0.02"
+    verified: "2026-10-14: release states 'Consolidated Revenues for FY2024 were at Rs 2,29,171 crores'"
   - id: sunpharma_sales_fy24
     question: "What were Sun Pharmaceutical's consolidated gross sales for FY2023-24, in rupees?"
     answer: 4.77585e+11
     unit: INR
-    tol: 0.02
+    tol: 0.01
     as_written: "Rs 477,585 million (Rs 47,758.5 crore), up 10.4%"
     source: https://sunpharma.com/wp-content/uploads/2024/05/Press-Release-Sun-Pharma-Q4FY24-Financial-Result.pdf
     source_type: primary (company release, 22 May 2024)
-    confidence: medium
-    caveat: "total revenue (Rs 48,497 crore) is 1.5% higher and would also pass at tol 0.02; consider tol 0.01"
+    confidence: high
+    caveat: "total revenue (Rs 48,497 crore) is 1.5% higher; tol tightened to 0.01 so it fails"
+    verified: "2026-10-14: release states 'Gross sales at Rs. 477,585 million, growth of 10.4%'"
   - id: ntpc_generation_fy24
     question: "How much electricity did the NTPC Group generate in FY2023-24, in kWh (units)?"
     answer: 4.22e+11
     unit: units
     tol: 0.02
     as_written: "422 billion units (group; standalone 362 BU)"
-    source: https://energetica-india.net/news/ntpc-announces-record-financial-results-for-fy-2023-24
-    source_type: secondary (reports NTPC's FY24 results)
-    confidence: medium
+    source: https://ntpc.co.in/node/1896
+    source_type: primary (NTPC release)
+    confidence: high
     caveat: "group vs standalone must be explicit; a March 2024 interim report said \"crossed 400 BU\""
+    verified: "2026-10-14: NTPC release states group generation 422 BU, standalone 362 BU in FY24"
   - id: fdi_equity_fy24
     question: "What were India's FDI equity inflows in FY2023-24 (DPIIT), in US dollars?"
     answer: 4.442e+10
@@ -110,3 +122,4 @@ questions:
     source_type: secondary (reports DPIIT data)
     confidence: medium
     caveat: "equity vs total FDI must be explicit; DPIIT's own factsheet would be the primary source"
+    verified: "2026-10-14: USD 44.42 bn equity / 70.95 bn total, attributed to DPIIT, confirmed by Deccan Herald and Deccan Chronicle"
