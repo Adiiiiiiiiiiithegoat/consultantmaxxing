@@ -54,15 +54,29 @@ Use a 5-case **train** subset (`--n 5`) for iteration; never iterate on the test
 **Re-run plan after the answer-quality changes (2026-10-14).** Use 6 train cases: the
 original 3 (p012, p017, p025) plus the next 3 in the train order (p031, p033, p039), which no
 fix was developed against. Same model for system and baseline.
+
+**On Claude via the Pro subscription** (`config/models.claude.yaml`: Sonnet for EM, research,
+analyst, storyliner, partner and baseline; Opus for the judge; Haiku for the interviewer and
+extraction; `claude` budget profile). No API key is used (llm/claude_cli.py strips it). One
+line in a plain PowerShell terminal (resumable: rerun the same line after any stop):
 ```
-uv run consult eval system --split train --n 6 --name system-train6
-uv run consult eval baseline --split train --n 6 --name baseline-train6
-uv run python -c "from consultant.evals.report import *; from consultant.config import ROOT;   print(gate(load_rows(ROOT/'eval_results','system-train6'), load_rows(ROOT/'eval_results','baseline-train6')))"
-uv run consult eval partner      # 5/5 blocking + clean approved
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult eval system --split train --n 6 --name system-train6 --profile claude; uv run consult eval baseline --split train --n 6 --name baseline-train6; uv run consult eval partner
 ```
+Then the comparison:
+```
+uv run python -c "from consultant.evals.report import *; from consultant.config import ROOT; print(gate(load_rows(ROOT/'eval_results','system-train6'), load_rows(ROOT/'eval_results','baseline-train6')))"
+```
+Expected time on Pro (from one measured case-mode engagement, 2026-10-14: 5 min 45 s, 35
+calls, ~140K tokens, ~4% of the 5-hour window): system ~35 min for 6 cases (~24% of a window);
+baseline ~15 min (~6-12%); judge 24 Opus calls ~15 min (not measured; ~12-24%); partner eval
+~1 min. About 1-1.5 hours and roughly half of one 5-hour window if it starts in a fresh
+window and nothing else (including Claude Code sessions) uses the plan meanwhile. If the
+limit is hit, calls wait and retry every 20 minutes until the window resets (worst case adds
+up to ~5 hours); nothing is lost.
+
 Report the original 3 and the new 3 separately as well as together. Fact-finding: report
-`accuracy_heldout`; after the user has checked `consultant/evals/fact_questions_fresh.yaml`,
-those 10 become the held-out set.
+`accuracy_heldout`; the 10 spot-checked questions in `consultant/evals/fact_questions_fresh.yaml`
+become the held-out set when that eval is next wired up.
 
 ## 5. Phase 6: deliverables
 Gate ran offline (validator, live formulas, action titles). Deferred live check:

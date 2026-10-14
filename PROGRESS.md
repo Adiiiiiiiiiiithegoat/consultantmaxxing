@@ -642,3 +642,63 @@ Offline only (no live Groq evals); all of it is to be re-run on Claude (DEFERRED
   Sun Pharma, NTPC, FDI equity), each with the answer found, source URL, source type and a
   confidence note. Not used or run; a test checks nothing in `consultant/` loads them.
 - Offline suite: 119 passed.
+
+### 2026-10-14: simulator calibration + Claude on the Pro subscription (branch `claude-provider`)
+**Fresh fact questions:** user spot-checked all 10 (`fact_questions_fresh.yaml`); committed on
+answer-quality before the merge. answer-quality merged into main; this branch is not.
+
+**Part 1: case interviewer calibration (offline).** Calibration sets are built at run time from
+the casebook's own interviews (`consultant/evals/simulator_calibration.py`; train split only,
+the 6 re-run cases excluded, nothing derived committed). Positives: real candidate turns whose
+real interviewer reply hands over a case item (the item's words are >= 60% in the reply).
+Negatives: fishing / off-topic questions, worded differently for the fit and check halves.
+The LLM part can't run offline on Claude, so it was measured on the local model
+(ollama qwen3:4b-instruct, no network or quota); Haiku will differ.
+
+| half | matcher | right item answered | any answer | precision | negatives refused |
+|---|---|---|---|---|---|
+| fit (89 pos / 160 neg) | legacy | 58% | 92% | 0.36 | 81% |
+| fit | new | 65% | 94% | 0.51 | 96% |
+| check (98 pos / 160 neg) | legacy | 67% | 100% | 0.41 | 76% |
+| check | new | 68% | 97% | 0.54 | 99% |
+
+The new matcher: fishing requests refused before any model call (regex, messages of <= 30
+words; catches 9/10 unseen check wordings, 0 of 187 real questions); a hand-over prompt
+written from how the real interviews work; the model's top item plus the BM25 top item when it
+clearly matches (score >= 6, set on fit); at most 2 items. Caveats: the 4B model, not Haiku,
+did the picking; I saw the check half's fishing false positives once before adding the
+30-word limit. On the live Claude run below, Haiku answered 11 of 12 questions (previously
+62-88% went unanswered on gpt-oss-20b).
+
+**Part 2: Claude via the subscription.** ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN: not set in
+any .env (the line is empty), the shell, Windows user/system/process env, or Claude Code's
+config (no apiKeyHelper / primaryApiKey); Claude Code is OAuth-logged-in.
+- `consultant/llm/claude_cli.py`: `claude -p --output-format stream-json --verbose --model
+  <m> --system-prompt-file <role prompt> --tools "" --strict-mcp-config --setting-sources ""
+  --disable-slash-commands --no-session-persistence`, prompt on stdin, empty temp cwd, API key
+  vars stripped from the child env. `--bare` is avoided (it only accepts an API key).
+  stream-json's final result event is what `--output-format json` prints; the stream also
+  carries the rate-limit event (5-hour / 7-day utilization), which is logged per call.
+  Concurrency 1. Usage limit -> wait and retry every 20 min (up to 72 h, then a clean
+  QuotaExhausted stop; rerun resumes). Tokens (incl. cache split) and notional cost go to the
+  ledger and traces. JSON goes through the existing structured-output helper; no agent changes.
+- `config/models.claude.yaml` (Sonnet: EM, research, analyst, storyliner, partner, baseline;
+  Opus: judge; Haiku: interviewer, extraction) and a `claude` budget profile (1M tokens,
+  250 calls, 3 iterations, 12 questions).
+- `consult compare <problem.md> <human_answer.md>`: real-mode run, both answers through the
+  same blinding (plain text, no evidence ids or system-only sections), random A/B with the
+  key in `key/mapping.json`, each judged in a fresh uncached Opus call on a reference-free
+  rubric. Offline test only; not run live.
+- Offline tests use recorded CLI streams (`tests/fixtures/claude_cli/`, sanitized; the
+  usage-limit stream is synthetic, in the recorded shape).
+- **Live checks** (the only live calls): smoke call per model, all `apiKeySource: none`
+  (Haiku 2.2 s, Sonnet 1.5 s, Opus 1.6 s, ~760 input tokens each). One case-mode engagement,
+  `iimb-p056-grocery-retail-chain` (not in the re-run or calibration sets), system only:
+  **5 min 45 s, 35 calls (17 Sonnet / 18 Haiku), ~140K tokens (Sonnet 106K, Haiku 33K),
+  notional $0.54, 5-hour window 1% -> 5% (~4%), 7-day window unchanged at 41%**, no limit
+  waits, within budget (14% of the claude cap), validation passed, committed answer (low
+  confidence), interviewer answered 11/12. One analyst call came back flagged as failed with
+  a valid-looking reply and succeeded on retry; failures now log subtype/exit/stderr.
+- **6-case estimate** (DEFERRED_EVALS.md): about 1-1.5 h and roughly half of one 5-hour window
+  from a fresh window; judge (Opus) cost is the least certain part (not measured).
+- Offline suite: 130 passed.

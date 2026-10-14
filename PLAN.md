@@ -276,9 +276,13 @@ following only the README; UI renders a live run; full test suite green.
 - [x] Validator checks the cited fact's period matches the claim's period
 - [x] Efficiency measured from the transcript (unanswered / no-new-info vs reference)
 - [x] Propose 10 fresh fact questions with sources (`fact_questions_fresh.yaml`)
-- [ ] User spot-checks the 10 fresh fact questions; they become the held-out set
-- [ ] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval
-- [ ] Simulator: 62-88% of questions go unanswered for both system and baseline; check item matching isn't too strict
+- [x] User spot-checks the 10 fresh fact questions (all 10 verified)
+- [x] Simulator calibrated on the casebook's real interviews (fishing filter, new prompt, model + lexical pick)
+- [x] Claude via the Pro subscription: claude_cli provider, models.claude.yaml, claude budget profile
+- [x] `consult compare <problem.md> <human_answer.md>`: blinded A/B, judged separately
+- [x] Live: smoke call per model; one case-mode engagement measured (5m45s, ~140K tokens, ~4% of a 5-hour window)
+- [ ] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval (command in DEFERRED_EVALS.md)
+- [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
 
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain
