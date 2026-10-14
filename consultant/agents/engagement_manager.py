@@ -10,6 +10,7 @@ resumes where it stopped. Budget: investigation gets 70% of the profile's tokens
 the rest, so a capped run still delivers (with open questions).
 """
 
+import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
@@ -123,6 +124,19 @@ RESPOND_SYS = ("You are the candidate in a consulting case interview. The interv
                "question. Never repeat a question already asked.")
 
 
+RECONCILE = (
+    "Build ONE reconciled decision model for the client question below. It replaces the "
+    "earlier analyses listed, which disagree with each other on their assumptions. Use one "
+    "consistent set of inputs from the client's data (FACTS) and labelled estimates. In "
+    "RESULT put: 'inputs' (dict: input name -> value, every number the model uses), "
+    "'assumptions' (list of strings: each modelling choice and its source, e.g. which reading "
+    "of an ambiguous client statement you took and why the client's data supports it), "
+    "'options' (dict: each option the client is weighing, or each driver for a diagnosis -> "
+    "its value on the success metric), 'best' (the option the numbers favour) and "
+    "'sensitivities' (dict: the alternative readings where the earlier analyses disagreed -> "
+    "the resulting option values). Never invent data.")
+
+
 class CandidateTurn(BaseModel):
     message: str = Field(description="what you say to the interviewer")
 
@@ -182,8 +196,16 @@ def evidence_text(ws: Workspace, verified_only: bool = False, limit: int = 60) -
     rows = [f"F{f.id}: {f.claim if f.source_type == 'client' else f.claim[:220]} | "
             f"value={f.value} {f.unit} | period={f.period} | source={f.source_type}"
             for f in sorted(client + web, key=lambda f: f.id)]
-    rows += [f"A{a.id[1:]}: {a.name} -> {a.result}" if a.ok else
-             f"A{a.id[1:]}: {a.name} FAILED ({a.error})" for a in ws.state.analyses]
+    model = ws.state.notes.get("model", {}).get("id")
+
+    def analysis(a) -> str:
+        if not a.ok:
+            return f"A{a.id[1:]}: {a.name} FAILED ({a.error})"
+        if a.superseded_by:
+            return f"A{a.id[1:]}: {a.name} SUPERSEDED by {a.superseded_by} (don't cite)"
+        tag = " (RECONCILED DECISION MODEL: the numbers to use)" if a.id == model else ""
+        return f"A{a.id[1:]}{tag}: {a.name} -> {a.result}"
+    rows += [analysis(a) for a in ws.state.analyses]
     rows += [f"S{a.id}: {a.name} = {a.value} {a.unit} (estimate: {a.rationale[:100]})"
              for a in ws.facts.assumptions(eid)]
     return "\n".join(rows) or "(no evidence yet)"
@@ -422,6 +444,32 @@ class Engagement:
             self.ws.decide("system", "removed unverified figures", "; ".join(removed))
         return d.model_dump()
 
+    def _reconcile(self) -> dict:
+        """One decision model before synthesis: p033 had 10 analyses on conflicting
+        assumptions and the drafts swung between whichever one the last review favoured.
+        The earlier analyses stay on file (and in model.xlsx) but are marked superseded."""
+        st = self.ws.state
+        ok = [a for a in st.analyses if a.ok and not a.superseded_by]
+        if len(ok) < 2:
+            return {"id": ok[0].id if ok else None, "note": "nothing to reconcile"}
+        earlier = "\n".join(f"- {a.id} {a.name}: {a.purpose} -> "
+                            f"{json.dumps(a.result, default=str)[:600]}" for a in ok)
+        request = (f"{RECONCILE}\n\nCLIENT QUESTION: {self._question()}\nSUCCESS METRIC: "
+                   f"{st.scope.get('success_metric', '')}\n\nEARLIER ANALYSES:\n{earlier}")
+        try:
+            rec = analyst.analyse(self.llm, self.ws, request,
+                                  [h.id for h in st.hypotheses if h.priority == 1])
+        except StructuredOutputError as e:
+            self.ws.decide("analyst", "reconciled model failed", str(e))
+            return {"id": None, "note": "failed"}
+        if not (rec.ok and rec.result):
+            return {"id": None, "note": f"failed: {rec.error}"}
+        for a in ok:
+            a.superseded_by = rec.id
+        self.ws.decide("analyst", f"{rec.id} reconciles {', '.join(a.id for a in ok)}",
+                       "one decision model on consistent inputs")
+        return {"id": rec.id, "replaces": [a.id for a in ok]}
+
     def _known_refs(self) -> set[str]:
         eid = self.ws.state.engagement_id
         return ({f"F{f.id}" for f in self.ws.facts.facts(eid)}
@@ -500,6 +548,7 @@ class Engagement:
         reviewed: list[tuple[storyliner.Draft, partner.Review]] = []
         with self.llm.scoped(self.synthesis):
             try:
+                ws.step("model", self._reconcile)
                 draft = storyliner.Draft(**ws.step(
                     "story0", lambda: storyliner.write(self.llm, self._brief()).model_dump()))
                 for r in range(MAX_REVIEW_ROUNDS):

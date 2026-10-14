@@ -123,7 +123,7 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     eng, ws, iv = engagement(tmp_path, llm)
     out = eng.run()
     st = ws.state
-    assert st.steps_done == ["scope", "plan", "iter0", "story0", "review0", "story1",
+    assert st.steps_done == ["scope", "plan", "iter0", "model", "story0", "review0", "story1",
                              "review1", "repair", "deliver"]
     assert st.problem_statement == BAKERY.problem_statement and st.case_type == "profitability"
     # clarifying + hypothesis questions went to the client; answers stored as sourced facts
@@ -607,3 +607,45 @@ def test_best_reviewed_prefers_fewer_blocking_then_fewer_critical_then_later():
     assert best_reviewed([(d, rv("major")), (d, rv("critical"))]) == 0
     assert best_reviewed([(d, rv("major")), (d, rv("major"))]) == 1
     assert best_reviewed([(d, rv("minor", "minor")), (d, rv("major"))]) == 0  # minor: comment
+
+
+def test_one_reconciled_model_supersedes_the_earlier_analyses(tmp_path):
+    # p033 had 10 analyses on conflicting assumptions; drafts swung between them. Before
+    # synthesis one model on consistent, explicit inputs replaces them in the brief.
+    from consultant.agents.engagement_manager import evidence_text
+
+    class Two(ScriptedLLM):
+        requests: list[str] = []
+
+        def Assessment(self, user):
+            a = super().Assessment(user)
+            a["analyses_needed"] = ["Option A value, capacity capped", "Option A value, uncapped"]
+            return a
+
+        def AnalysisCode(self, user):
+            self.requests.append(user)
+            if "RECONCILED" in user or "reconciled decision model" in user:
+                return {"name": "decision_model", "purpose": "one model",
+                        "code": "RESULT = {'inputs': {'price': 30}, 'assumptions': ['capacity "
+                                "uncapped, as the client said'], 'options': {'A': 74, 'B': 60},"
+                                " 'best': 'A', 'sensitivities': {'capped': {'A': 74, 'B': 9}}}"}
+            n = len(self.requests)
+            return {"name": f"option_value_{n}", "purpose": "x", "code": f"RESULT = {{'v': {n}}}"}
+    llm = Two()
+    eng, ws, _ = engagement(tmp_path, llm)
+    eng.run()
+    st = ws.state
+    model = st.notes["model"]["id"]
+    assert [a.id for a in st.analyses] == ["A1", "A2", "A3"] and model == "A3"
+    assert [a.superseded_by for a in st.analyses] == ["A3", "A3", None]
+    assert "option_value_1" in llm.requests[-1] and "option_value_2" in llm.requests[-1]
+    brief = evidence_text(ws, verified_only=True)
+    assert "A1: option_value_1 SUPERSEDED by A3" in brief and "{'v': 1}" not in brief
+    assert "A3 (RECONCILED DECISION MODEL" in brief and "'inputs': {'price': 30}" in brief
+
+
+def test_nothing_to_reconcile_with_one_analysis(tmp_path):
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM())
+    eng.run()
+    assert ws.state.notes["model"] == {"id": "A1", "note": "nothing to reconcile"}
+    assert ws.state.analyses[0].superseded_by is None
