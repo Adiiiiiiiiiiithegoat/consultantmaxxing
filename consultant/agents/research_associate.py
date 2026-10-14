@@ -91,9 +91,12 @@ def facts_table(facts: list[Fact], question: str = "") -> str:
         return (period_flag(f, question) != "", -f.credibility)
     rows = []
     for f in sorted(facts, key=rank)[:MAX_FACTS_SHOWN]:
+        # the verbatim quote and page title let the reader catch an extractor mislabel
+        # (a quarter labelled as the year, a balance-sheet total labelled as profit)
         row = (f"[F{f.id}] {f.claim} | value={f.value} {f.unit} | "
                f"period={f.period}{period_flag(f, question)} | "
-               f"{f.source_type} {domain(f.source_url)}")
+               f"{f.source_type} {domain(f.source_url)} \"{f.source_title[:70]}\" | "
+               f"quote: \"{' '.join(f.quote.split())[:160]}\"")
         if f.header:
             row += f" | table header: {f.header[:200]}"
         rows.append(row)
