@@ -28,7 +28,7 @@ use the same model as the system's engagement manager, and each result records
 ## 2. Phase 2: research layer
 | # | Check | Command | Pass criterion |
 |---|---|---|---|
-| 2.1 | Fact-finding accuracy (20 gate questions) | `uv run python -m consultant.evals.fact_finding` | accuracy ≥ 70% within tolerance |
+| 2.1 | Fact-finding accuracy (20 gate questions: 10 dev + 10 held out) | `uv run python -m consultant.evals.fact_finding` | `accuracy_heldout` ≥ 70% within tolerance (held-out per-question detail is not printed; iterate on dev) |
 | 2.2 | Citation verifier | same run (`eval_results/fact_finding/summary.json`) | `verifier_rate` ≥ 0.90 |
 | 2.3 | No deliverable-eligible fact without a source | same run | `eligible_without_source` = 0 (also schema-enforced and unit-tested) |
 | 2.4 | Dev set for iteration (not a gate) | `uv run python -m consultant.evals.fact_finding --dev` | used to debug before 2.1 |

@@ -347,3 +347,40 @@ def test_verifier_retries_a_timed_out_refetch_but_not_a_404():
     assert refetch(web, "u", sleep=lambda s: None).error is None and web.calls == 2
     web = FlakyWeb(["HTTPStatusError(\"Client error '404 Not Found'\")"])
     assert refetch(web, "u", sleep=lambda s: None).error and web.calls == 1
+
+
+def test_fact_gate_split_and_heldout_accuracy(tmp_path, monkeypatch, capsys):
+    import yaml
+
+    from consultant.evals import fact_finding as ff
+    qs = yaml.safe_load(ff.QUESTIONS.read_text(encoding="utf-8"))["questions"]
+    split = {q["id"]: q["split"] for q in qs}
+    assert len(qs) == 20 and list(split.values()).count("heldout") == 10
+    inspected = {"infosys_rev_fy24", "infosys_pat_fy24", "tcs_rev_fy24", "tatamotors_rev_fy24",
+                 "upi_volume_fy24", "crude_steel_fy24", "hdfcbank_pat_fy24", "jio_arpu_q4fy24",
+                 "lt_rev_fy24"}  # looked at while fixing the research layer: never held out
+    assert all(split[i] == "dev" for i in inspected)
+
+    from types import SimpleNamespace as NS
+    two = tmp_path / "q.yaml"
+    two.write_text(yaml.safe_dump({"questions": [
+        {"id": "a", "split": "dev", "question": "qa", "answer": 5, "tol": 0.01},
+        {"id": "b", "split": "heldout", "question": "qb", "answer": 7, "tol": 0.01}]}))
+
+    class RA:
+        def __init__(self, *a, **k):
+            pass
+
+        def research(self, q):
+            brief = NS(value=5 if q == "qa" else 1, unit="", model_dump=lambda: {})
+            return NS(brief=brief, facts=[], rejected_facts=0, spent={})
+    monkeypatch.setattr(ff, "QUESTIONS", two)
+    monkeypatch.setattr(ff, "OUT", tmp_path / "out")
+    monkeypatch.setattr(ff, "ResearchAssociate", RA)
+    monkeypatch.setattr(ff, "verify_facts", lambda *a: {"verified": 1, "failed": 0})
+    monkeypatch.setattr(ff, "LLM", lambda **k: None)
+    monkeypatch.setattr(ff, "Web", lambda **k: None)
+    s = ff.run()
+    assert s["accuracy_dev"] == 1.0 and s["accuracy_heldout"] == 0.0 and s["accuracy"] == 0.5
+    log = capsys.readouterr().out
+    assert "a: OK" in log and "b: done (held out)" in log and "want=7" not in log

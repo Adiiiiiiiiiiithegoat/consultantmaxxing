@@ -12,7 +12,7 @@ import argparse
 import json
 from pathlib import Path
 
-from consultant.agents.engagement_manager import Engagement
+from consultant.agents.engagement_manager import Engagement, hypotheses_text
 from consultant.agents.storyliner import Draft, render_text
 from consultant.config import ROOT
 from consultant.evals.common import code_version
@@ -27,13 +27,42 @@ from consultant.workspace import Workspace
 RESULTS = ROOT / "eval_results"
 
 
-def submission(iv: Interviewer, draft: Draft, searches: int = 0) -> Submission:
+def work_record(ws: Workspace, max_facts: int = 25) -> str:
+    """What the judge sees of the system's process: issue tree, hypotheses with status and
+    evidence, analyses with results, and the facts gathered."""
+    st = ws.state
+
+    def tree(n, depth=0):
+        return [f"{'  ' * depth}- {n.id} {n.text}"] + [x for c in n.children
+                                                       for x in tree(c, depth + 1)]
+    analyses = [f"{a.id} {a.name}: {a.purpose} -> "
+                + (json.dumps(a.result, default=str)[:300] if a.ok else f"FAILED ({a.error})")
+                for a in st.analyses]
+    facts = ws.facts.facts(st.engagement_id)
+    return "\n".join(
+        ["ISSUE TREE:", *(tree(st.issue_tree) if st.issue_tree else ["(none)"]),
+         "HYPOTHESES:", hypotheses_text(ws) or "(none)",
+         "ANALYSES:", *(analyses or ["(none)"]),
+         f"FACTS ({len(facts)} gathered):",
+         *[f"F{f.id}: {f.claim[:160]}" for f in facts[:max_facts]]])
+
+
+def final_draft(ws: Workspace) -> Draft:
+    """The draft that was delivered: after the repair pass if it ran, else the last story."""
+    n = ws.state.notes
+    if "repair" in n:
+        return Draft(**n["repair"])
+    last = max(int(k[5:]) for k in n if k.startswith("story") and k[5:].isdigit())
+    return Draft(**n[f"story{last}"])
+
+
+def submission(iv: Interviewer, draft: Draft, searches: int = 0, work: str = "") -> Submission:
     t = [{"role": "interviewer", "content": iv.opening()}]
     for e in iv.log:
         t += [{"role": "candidate", "content": e["question"]},
               {"role": "interviewer", "content": e["reply"]}]
     return Submission(transcript=t, final_answer=render_text(draft),
-                      questions_asked=len(iv.log), searches=searches)
+                      questions_asked=len(iv.log), searches=searches, work=work)
 
 
 def run_case(llm, case: Case, root: Path, profile: str = "dev") -> dict:
@@ -42,7 +71,7 @@ def run_case(llm, case: Case, root: Path, profile: str = "dev") -> dict:
     # replay the interview log so a resumed engagement's transcript is complete
     iv.log = ws.state.notes.get("interview_log", [])
     out = Engagement(llm, ws, interviewer=iv).run()
-    verdict = judge(llm, case, submission(iv, out["draft"]))
+    verdict = judge(llm, case, submission(iv, out["draft"], work=work_record(ws)))
     return {"case_id": case.id, "case_type": case.case_type, "code_version": code_version(),
             "stopped": out["stopped"], "scores": verdict.scores(),
             "overall": verdict.overall(), "verdict": verdict.model_dump(),
@@ -77,6 +106,29 @@ def run_cases(split: str = "train", n: int | None = 3, name: str = "system-train
     return summary
 
 
+def rejudge(name: str = "system-train", out: str | None = None) -> list[dict]:
+    """Re-score finished case-mode engagements with the current judge (no engagement calls):
+    same transcript, workspace and delivered draft, new verdict. Writes eval_results/<out>/."""
+    out_dir = RESULTS / (out or f"{name}-rejudged")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    llm = LLM(tracer=Tracer(run_id=f"eval-{out_dir.name}"))
+    cases = {c.id: c for split in ("train", "test") for c in load_cases(split)}
+    rows = []
+    for p in sorted((RESULTS / name).glob("*.json")):
+        old = json.loads(p.read_text(encoding="utf-8"))
+        case = cases[old["case_id"]]
+        ws = Workspace.load(f"case-{case.id}", root=ROOT / "engagements" / name)
+        iv = Interviewer(case, llm)
+        iv.log = ws.state.notes.get("interview_log", [])
+        verdict = judge(llm, case, submission(iv, final_draft(ws), work=work_record(ws)))
+        row = {**old, "judge_version": code_version(), "scores": verdict.scores(),
+               "overall": verdict.overall(), "verdict": verdict.model_dump()}
+        (out_dir / p.name).write_text(json.dumps(row, indent=1, ensure_ascii=False),
+                                      encoding="utf-8")
+        rows.append(row)
+    return rows
+
+
 def run_real(question: str, name: str = "real", profile: str = "dev") -> dict:
     from consultant.research.web import Web
     tracer = Tracer(run_id=f"eval-{name}")
@@ -97,6 +149,8 @@ def main(argv=None):
     c.add_argument("--n", type=int, default=None)
     c.add_argument("--name", default=None)
     c.add_argument("--profile", default="dev")
+    j = sub.add_parser("rejudge")
+    j.add_argument("name")
     r = sub.add_parser("real")
     r.add_argument("question")
     r.add_argument("--name", default="real")
@@ -104,6 +158,8 @@ def main(argv=None):
     a = p.parse_args(argv)
     if a.cmd == "cases":
         res = run_cases(a.split, a.n, a.name or f"system-{a.split}", a.profile)
+    elif a.cmd == "rejudge":
+        res = {r["case_id"]: r["scores"] for r in rejudge(a.name)}
     else:
         res = run_real(a.question, a.name, a.profile)
     print(json.dumps(res, indent=1, default=str))

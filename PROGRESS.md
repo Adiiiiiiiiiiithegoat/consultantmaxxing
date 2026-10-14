@@ -557,3 +557,48 @@ detail, per-fix diagnosis and open decisions: **MORNING_REPORT.md**.
   survives a bad chunk; brief sees quotes and titles; table rows with duplicated year
   columns / no verified header; verifier retries transient re-fetch errors.
 - Offline suite: 109 passed.
+
+### 2026-10-14: eval fairness pass (branch `eval-fairness`, after merging overnight-fixes into main)
+- **Partner fixture** (`partner_seeded.yaml`): the clean draft said profits fell 20% while its
+  own evidence implied -60%. Accounts are now consistent (revenue 30 flat, costs 20 -> 22,
+  profit 10 -> 8) and recorded in an `accounts:` block; a test checks every number in the
+  evidence and all six drafts against them (and that the seeded maths flaw really is wrong).
+  Re-run: 5/5 flaws caught; the clean draft still gets `revise`, now on soft points ("conflates
+  cost % with profit impact", product mix): partner severity calibration is open.
+- **Repair pass** (`consultant/deliverables/repair.py`, step `repair` before `deliver`): one
+  storyliner call rewrites only the flagged parts (re-cite evidence for the same entity, metric
+  and period, or drop the number); whatever is still flagged becomes `[unverified figure]` and
+  is listed in the memo; refs that name no evidence are dropped first. Smoke proof
+  (smoke-asianpaints-2): a live synthesis re-run (fresh cache, real budget) validates clean;
+  the original flagged draft (43.6 made up; 42.39 miscited x2) goes to zero flags (the model
+  removed 43.6, the two 42.39s were replaced and listed). Found on the way: given a looser
+  prompt the model "fixed" a flag by citing a 2026-quarter figure for FY24; the prompt now
+  requires the same period, and the validator itself still doesn't check periods.
+- **Judge**: two calls. Process dims (scoping, structure, hypotheses, maths, evidence,
+  efficiency) see transcript + work record (system: issue tree, hypotheses, analyses, facts;
+  baseline: none, its transcript is its process). Outcome dims (key_insight, recommendation,
+  communication) see the final answer only. Documented in `judge.py`. Live discrimination
+  re-run with the new judge: 5/5 (strong 3.9-4.8 vs flawed 1.1-1.7).
+- **System vs baseline, same 3 train cases, same model (gpt-oss-20b), new judge**:
+  | Dimension | Judged on | System | Baseline | Δ |
+  |---|---|---|---|---|
+  | scoping | process | 2.00 | 1.67 | +0.33 |
+  | structure | process | 2.67 | 1.00 | +1.67 |
+  | hypotheses | process | 2.00 | 1.00 | +1.00 |
+  | maths | process | 2.33 | 2.33 | 0.00 |
+  | evidence | process | 1.67 | 1.00 | +0.67 |
+  | efficiency | process | 1.00 | 1.00 | 0.00 |
+  | key_insight | final answer | 1.00 | 2.33 | -1.33 |
+  | recommendation | final answer | 1.33 | 3.00 | -1.67 |
+  | communication | final answer | 3.67 | 4.33 | -0.67 |
+  | **overall** | | **1.96** | **1.96** | **0.00** |
+  Gate (beat baseline overall and >= 6/9 dims): not met (4/9, tie). n = 3: directional only.
+  Diagnosis: the system's process is better but its answers hedge ("cannot conclusively
+  recommend... collect the missing data first") where the baseline commits. Next fix is in
+  the storyliner (best answer + confidence + what would change it), not the judge.
+  Results: `eval_results/system-train-rejudged/`, `eval_results/baseline-train/`.
+- **Fact-finding split**: dev = the 9 questions inspected while fixing + 1 seeded draw;
+  held-out = the other 10 (their per-question detail is no longer printed). Run 3 rescored:
+  held-out 10/10, dev 5/10, all 15/20. The held-out set skews easy (all passed on the first
+  run, which is why they were never inspected), so 100% overstates; fresh questions needed.
+- Offline suite: 113 passed.

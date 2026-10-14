@@ -266,9 +266,14 @@ following only the README; UI renders a live run; full test suite green.
 - [x] `consult eval system --split train --n 3`: 3/3 within budget, all artefacts
 - [x] `consult eval facts`: accuracy 75%, verifier 0.99, unsourced 0
 - [x] `consult eval partner`: 5/5 seeded flaws caught
-- [ ] Decide: fix the inconsistent clean draft in `partner_seeded.yaml` (partner rightly rejects it)
-- [ ] Decide: dev synthesis reserve vs validator-only revision pass (smoke draft kept 2 flags)
-- [ ] Decide: should the judge's submission include the tree, hypotheses and analyses
+- [x] Partner fixture made arithmetically consistent, with a consistency test
+- [x] Targeted repair pass: no flagged number ships as fact (fix, else `[unverified figure]`)
+- [x] Judge: process dimensions on transcript + workspace, outcome dimensions on the answer only
+- [x] Baseline on the same 3 train cases, same model; system vs baseline per dimension
+- [x] Fact-finding gate split 10 dev / 10 held out; held-out accuracy is the headline
+- [ ] Storyliner: commit to a best answer when evidence is thin (it says "collect data" and loses outcome dims)
+- [ ] Partner: still rejects the (now consistent) clean draft on soft points; calibrate severity
+- [ ] Write 10 fresh hand-checked fact questions for an unbiased held-out set
 
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain

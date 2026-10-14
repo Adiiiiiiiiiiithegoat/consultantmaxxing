@@ -24,6 +24,10 @@ def memo_md(ws, d: Draft, issues: list[dict]) -> str:
                     "and no further revision fitted the budget:\n" +
                     _bullets(f"[{i['severity']}] {i['kind']} @ {i['where']}: {i['detail']}"
                              for i in unresolved))
+    if removed := st.notes.get("unverified_removed"):
+        flagged += ("\n\n## Figures removed as unverified\nThese numbers were not in the "
+                    "evidence they cited and were replaced by '[unverified figure]':\n" +
+                    _bullets(removed))
     if issues:
         flagged += ("\n\n## ⚠ Validation flags\nThese items could not be traced to cited "
                    "evidence and must not be relied on:\n" +

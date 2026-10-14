@@ -20,6 +20,7 @@ from consultant import deliverables
 from consultant.agents import analyst, partner, storyliner
 from consultant.agents.research_associate import ResearchAssociate
 from consultant.config import profile as load_profile
+from consultant.deliverables import repair
 from consultant.deliverables.validate import validate_draft
 from consultant.knowledge import playbooks
 from consultant.knowledge.retrieval import Retriever, add_primer
@@ -310,6 +311,18 @@ class Engagement:
                        if h.priority == 1)
         return {"next_questions": a.next_questions, "done": a.done or resolved}
 
+    def _repair(self, d: storyliner.Draft) -> dict:
+        """Targeted pass on validator flags; any number still flagged is removed as unverified
+        (the validator's points in the last review are then settled, so they're dropped)."""
+        d, removed = repair.repair(self.llm, self.ws, d, evidence_text(self.ws, verified_only=True))
+        st = self.ws.state
+        st.notes["unverified_removed"] = removed
+        st.notes["unresolved_review"] = [i for i in st.notes.get("unresolved_review") or []
+                                         if not i["detail"].startswith("[validator]")]
+        if removed:
+            self.ws.decide("system", "removed unverified figures", "; ".join(removed))
+        return d.model_dump()
+
     def _known_refs(self) -> set[str]:
         eid = self.ws.state.engagement_id
         return ({f"F{f.id}" for f in self.ws.facts.facts(eid)}
@@ -398,6 +411,8 @@ class Engagement:
             draft = fallback_draft(ws)
         if rv is not None and rv.verdict != "approve":
             st.notes["unresolved_review"] = [i.model_dump() for i in rv.blocking()]
+        with self.llm.scoped(self.synthesis):
+            draft = storyliner.Draft(**ws.step("repair", lambda: self._repair(draft)))
         ws.save()
         ws.step("deliver", lambda: deliverables.render(ws, draft))
         return {"stopped": stopped, "draft": draft, "deliverables": st.deliverables}

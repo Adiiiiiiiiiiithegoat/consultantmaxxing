@@ -166,3 +166,56 @@ def test_validation_report_fails_on_non_live_formulas(tmp_path):
     render(ws, good_draft())
     report = json.loads((ws.dir / "deliverables/validation.json").read_text())
     assert not report["passed"] and report["formula_issues"]
+
+
+def test_repair_pass_fixes_or_removes_every_flagged_number(tmp_path):
+    # smoke-asianpaints-2 shipped "43.6" (in no evidence) and 42.39 cited to the wrong facts
+    from consultant.deliverables.repair import UNVERIFIED, repair
+    from consultant.llm import StructuredOutputError
+    from consultant.tracing import BudgetExceeded
+
+    class FakeLLM:
+        def __init__(self, reply):
+            self.reply, self.calls = reply, 0
+
+        def structured(self, role, msgs, schema):
+            self.calls += 1
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return schema(**self.reply)
+    ws = workspace(tmp_path)
+    bad = good_draft()
+    bad.arguments[1].title = "A 10% price rise closes the gap, about 43.6% of it"  # made up
+    bad.slides[0].points = ["costs from 19 to 22 crore (15.79%)"]                 # A1 not cited
+    assert {i["where"] for i in validate_draft(ws, bad)} == {"argument 2", "slide 1"}
+
+    # 1) the model re-cites the slide correctly, tries to edit an unflagged location and
+    #    leaves the made-up number: only flagged parts change, the leftover is removed
+    llm = FakeLLM({"fixes": [
+        {"where": "slide 1", "refs": ["F1", "F2", "A1"]},
+        {"where": "argument 1", "title": "Rewritten!"},
+        {"where": "argument 2", "text": "Still 43.6%."}]})
+    d, removed = repair(llm, ws, bad, "evidence")
+    assert d.slides[0].refs == ["F1", "F2", "A1"] and "15.79%" in d.slides[0].points[0]
+    assert d.arguments[0].title == bad.arguments[0].title
+    assert "43.6" not in d.arguments[1].title + d.arguments[1].text
+    assert UNVERIFIED in d.arguments[1].text and removed == [
+        "43.6 in argument 2 (not in the evidence it cites)"]
+    assert validate_draft(ws, d) == []
+
+    # 2) no budget (or no usable reply): every flagged number is removed, nothing else
+    for err in (BudgetExceeded("tokens"), StructuredOutputError("x")):
+        d, removed = repair(FakeLLM(err), ws, bad, "evidence")
+        assert validate_draft(ws, d) == [] and len(removed) == 2
+        assert d.slides[0].points == [f"costs from 19 to 22 crore ({UNVERIFIED})"]
+        assert d.answer == bad.answer
+
+    # 3) a ref that names no evidence ("Open Questions" on the smoke re-run) is dropped
+    odd = good_draft()
+    odd.arguments[1].refs = ["S1", "Open Questions"]
+    d, removed = repair(FakeLLM({"fixes": []}), ws, odd, "e")
+    assert d.arguments[1].refs == ["S1"] and validate_draft(ws, d) == [] and removed == []
+
+    # 4) a clean draft makes no call
+    llm = FakeLLM({"fixes": []})
+    assert repair(llm, ws, good_draft(), "e") == (good_draft(), []) and llm.calls == 0

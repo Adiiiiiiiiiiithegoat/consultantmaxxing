@@ -119,7 +119,7 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     out = eng.run()
     st = ws.state
     assert st.steps_done == ["scope", "plan", "iter0", "story0", "review0", "story1",
-                             "review1", "deliver"]
+                             "review1", "repair", "deliver"]
     assert st.problem_statement == BAKERY.problem_statement and st.case_type == "profitability"
     # clarifying + hypothesis questions went to the client; answers stored as sourced facts
     assert len(iv.log) >= 4
@@ -285,12 +285,21 @@ def test_partner_eval_scoring_is_strict(tmp_path):
 
 def test_run_case_produces_judged_result(tmp_path):
     from consultant.evals import run_system
-    from consultant.evals.judge import RUBRIC
+    from consultant.evals.judge import OUTCOME, PROCESS, RUBRIC
 
     class Judged(ScriptedLLM):
-        def Verdict(self, user):
-            assert "CANDIDATE TRANSCRIPT" in user and "Unhedged butter" in user
-            return {k: {"justification": "ok", "score": 3} for k in RUBRIC}
+        # process dims see the transcript + workspace; outcome dims see the answer only
+        def ProcessVerdict(self, user):
+            assert "CANDIDATE TRANSCRIPT" in user and "ISSUE TREE" in user
+            assert "HYPOTHESES" in user and "ANALYSES" in user and "FACTS" in user
+            assert "CANDIDATE FINAL ANSWER" not in user
+            return {k: {"justification": "ok", "score": 3} for k in PROCESS}
+
+        def OutcomeVerdict(self, user):
+            assert "Unhedged butter" in user and "CANDIDATE TRANSCRIPT" not in user
+            assert "ISSUE TREE" not in user
+            return {k: {"justification": "ok", "score": 3} for k in OUTCOME}
+    assert set(PROCESS) | set(OUTCOME) == set(RUBRIC) and not set(PROCESS) & set(OUTCOME)
     import consultant.agents.engagement_manager as em
     orig = em.Retriever.load
     em.Retriever.load = classmethod(lambda cls, *a, **k: cls([]))
@@ -378,3 +387,81 @@ def test_research_questions_get_engagement_context(tmp_path, monkeypatch):
     e = Engagement(ScriptedLLM(), ws, web=object(), retriever=Retriever([]))
     e._research(["What was the EBITDA margin in FY2023-24?"])
     assert seen and "Acme Ltd" in seen[0] and "Paints" in seen[0]
+
+
+def test_partner_fixture_numbers_are_internally_consistent():
+    # The clean draft used to say profits fell 20% while its own evidence implied -60%
+    # (revenue 24, costs 19 -> 22); the partner rightly rejected it.
+    import re
+
+    import yaml
+
+    from consultant.evals.partner_eval import SEEDED
+    s = yaml.safe_load(SEEDED.read_text(encoding="utf-8"))
+    acc = s["accounts"]
+    for y in (0, 1):
+        assert acc["revenue"][y] - acc["costs"][y] == acc["profit"][y]
+        assert abs(sum(v[y] for v in acc["cost_lines"].values()) - acc["costs"][y]) < 1e-9
+    pairs = {tuple(acc[k]) for k in ("revenue", "costs", "profit")}
+
+    def pct(a, b):
+        return (b - a) / a * 100
+    # every "% change" stated for a cost line in the evidence matches the accounts
+    for line, (a, b) in acc["cost_lines"].items():
+        stated = re.search(rf"{line}[^;|]*?Rs {a:g} crore ([+-]?\d+)%|{line}[^;|]*?flat",
+                           s["evidence"])
+        assert stated, line
+        assert stated.group(1) is None or abs(float(stated.group(1)) - pct(a, b)) < 0.5, line
+    assert re.search(rf"Profits fell {-pct(*acc['profit']):g}%", s["evidence"])
+    a1 = re.search(r"'base_cost_cr': (\S+), 'current_cost_cr': (\S+), 'increase_pct': (\S+)}",
+                   s["evidence"])
+    assert (float(a1[1]), float(a1[2])) == tuple(acc["costs"])
+    assert abs(float(a1[3]) - pct(*acc["costs"])) < 0.01
+    # every "from Rs A to Rs B" names a real pair; a % stated with it must be right,
+    # except in the draft seeded with the maths flaw, where it must be wrong
+    move = re.compile(r"from Rs (\d+(?:\.\d+)?)(?: crore)? to Rs (\d+(?:\.\d+)?) crore"
+                      r"(?:[ ,]*\(|, an? )?(-?\d+(?:\.\d+)?)?%?")
+    texts = [("evidence", s["evidence"]), ("clean", s["clean"])] + \
+        [(f["kind"], f["draft"]) for f in s["flawed"]]
+    for name, text in texts:
+        for m in move.finditer(text):
+            a, b = float(m[1]), float(m[2])
+            assert (a, b) in pairs, (name, m[0])
+            if m[3] is not None:
+                right = abs(abs(float(m[3])) - abs(pct(a, b))) < 0.5
+                assert right == (name != "maths"), (name, m[0])
+    maths = next(f["draft"] for f in s["flawed"] if f["kind"] == "maths")
+    assert any(m[3] for m in move.finditer(maths))  # the seeded flaw is actually present
+
+
+def test_rejudge_rescores_a_finished_engagement_without_rerunning_it(tmp_path, monkeypatch):
+    import json
+
+    from consultant.evals import run_system
+    from consultant.evals.judge import OUTCOME, PROCESS
+
+    class Judge(ScriptedLLM):
+        def __init__(self, score):
+            super().__init__()
+            self.score = score
+
+        def ProcessVerdict(self, user):
+            assert "ISSUE TREE" in user
+            return {k: {"justification": "j", "score": self.score} for k in PROCESS}
+
+        def OutcomeVerdict(self, user):
+            return {k: {"justification": "j", "score": self.score} for k in OUTCOME}
+    import consultant.agents.engagement_manager as em
+    monkeypatch.setattr(em.Retriever, "load", classmethod(lambda cls, *a, **k: cls([])))
+    monkeypatch.setattr(run_system, "RESULTS", tmp_path / "results")
+    monkeypatch.setattr(run_system, "ROOT", tmp_path)
+    monkeypatch.setattr(run_system, "load_cases", lambda split: [BAKERY])
+    row = run_system.run_case(Judge(2), BAKERY, tmp_path / "engagements" / "sys", "dev")
+    (tmp_path / "results" / "sys").mkdir(parents=True)
+    (tmp_path / "results" / "sys" / f"{BAKERY.id}.json").write_text(json.dumps(row))
+    llm = Judge(4)
+    monkeypatch.setattr(run_system, "LLM", lambda **k: llm)
+    [new] = run_system.rejudge("sys")
+    assert new["overall"] == 4 and row["overall"] == 2
+    assert set(llm.calls) == {"ProcessVerdict", "OutcomeVerdict"}   # judge calls only
+    assert (tmp_path / "results" / "sys-rejudged" / f"{BAKERY.id}.json").exists()

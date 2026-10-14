@@ -1,4 +1,14 @@
-"""Rubric judge: scores a submission against the case's reference solution, 1-5 per dimension."""
+"""Rubric judge: scores a submission against the case's reference solution, 1-5 per dimension.
+
+What each dimension is judged on (the same for the system and the baseline):
+- PROCESS dimensions (scoping, structure, hypotheses, maths, evidence, efficiency) are judged
+  on everything the candidate visibly did: the interview transcript plus its work record (for
+  the system: the workspace's issue tree, hypotheses with status and evidence, analyses with
+  results, and a fact summary; the baseline keeps no workspace, so its transcript is its whole
+  work record).
+- OUTCOME dimensions (key_insight, recommendation, communication) are judged on the final
+  answer alone, so a long or well-documented process can't lift the answer's score.
+Two judge calls per submission, one per group; the Verdict combines them."""
 
 from pydantic import BaseModel, Field
 
@@ -27,19 +37,41 @@ RUBRIC = {
     "efficiency": "Reached the answer with few, purposeful questions/searches. "
                   "1 = scattershot or far too many; 5 = economical and targeted.",
 }
+PROCESS = ("scoping", "structure", "hypotheses", "maths", "evidence", "efficiency")
+OUTCOME = ("key_insight", "recommendation", "communication")
 
-JUDGE_SYS = (
-    "You are a strict consulting-interview assessor. Score the candidate's submission on each "
-    "rubric dimension from 1 to 5 using the reference solution as ground truth. Do not reward "
-    "length or confident tone. A submission that misses the key insight cannot score above 2 "
-    "on key_insight; one whose recommendation contradicts the evidence cannot score above 2 "
-    "on recommendation. Justify each score in at most two short sentences.\n\nRUBRIC:\n"
-    + "\n".join(f"- {k}: {v}" for k, v in RUBRIC.items()))
+_BASE = ("You are a strict consulting-interview assessor. Score the candidate on each rubric "
+         "dimension below from 1 to 5 using the reference solution as ground truth. Do not "
+         "reward length or confident tone. Justify each score in at most two short sentences."
+         "\n\n")
+PROCESS_SYS = (_BASE + "You see the candidate's process: the interview transcript and its "
+               "work record (issue tree, hypotheses, analyses, facts gathered), if it kept one. "
+               "Judge how the candidate worked; for maths, judge the analyses and every number "
+               "used.\n\nRUBRIC:\n" + "\n".join(f"- {k}: {RUBRIC[k]}" for k in PROCESS))
+OUTCOME_SYS = (_BASE + "You see only the candidate's final answer. An answer that misses the "
+               "key insight cannot score above 2 on key_insight; one whose recommendation "
+               "contradicts the evidence cannot score above 2 on recommendation.\n\nRUBRIC:\n"
+               + "\n".join(f"- {k}: {RUBRIC[k]}" for k in OUTCOME))
 
 
 class Score(BaseModel):
     justification: str
     score: int = Field(ge=1, le=5)
+
+
+class ProcessVerdict(BaseModel):
+    scoping: Score
+    structure: Score
+    hypotheses: Score
+    maths: Score
+    evidence: Score
+    efficiency: Score
+
+
+class OutcomeVerdict(BaseModel):
+    key_insight: Score
+    recommendation: Score
+    communication: Score
 
 
 class Verdict(BaseModel):
@@ -65,6 +97,7 @@ class Submission(BaseModel):
     final_answer: str
     questions_asked: int = 0
     searches: int = 0
+    work: str = ""  # work record: issue tree, hypotheses, analyses, facts ("" = none kept)
 
 
 def reference(case: Case) -> str:
@@ -75,9 +108,15 @@ def reference(case: Case) -> str:
 
 
 def judge(llm: LLM, case: Case, sub: Submission, role: str = "judge") -> Verdict:
+    ref = f"REFERENCE SOLUTION\n{clip(reference(case), 1800)}\n\n"
     convo = "\n".join(f"{t['role'].upper()}: {t['content']}" for t in sub.transcript)
-    user = (f"REFERENCE SOLUTION\n{clip(reference(case), 1800)}\n\n"
-            f"CANDIDATE TRANSCRIPT ({sub.questions_asked} questions, {sub.searches} searches)\n"
-            f"{clip(convo, 2200)}\n\nCANDIDATE FINAL ANSWER\n{clip(sub.final_answer, 900)}")
-    return llm.structured(role, [{"role": "system", "content": JUDGE_SYS},
-                                 {"role": "user", "content": user}], Verdict)
+    process = (f"{ref}CANDIDATE TRANSCRIPT ({sub.questions_asked} questions, {sub.searches} "
+               f"searches)\n{clip(convo, 2200)}\n\nCANDIDATE WORK RECORD\n"
+               f"{clip(sub.work, 1200) if sub.work else '(none kept: the transcript is all)'}")
+    p = llm.structured(role, [{"role": "system", "content": PROCESS_SYS},
+                              {"role": "user", "content": process}], ProcessVerdict)
+    o = llm.structured(role, [{"role": "system", "content": OUTCOME_SYS},
+                              {"role": "user", "content": f"{ref}CANDIDATE FINAL ANSWER\n"
+                                                          f"{clip(sub.final_answer, 900)}"}],
+                       OutcomeVerdict)
+    return Verdict(**p.model_dump(), **o.model_dump())
