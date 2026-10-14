@@ -432,3 +432,36 @@ def test_partner_fixture_numbers_are_internally_consistent():
                 assert right == (name != "maths"), (name, m[0])
     maths = next(f["draft"] for f in s["flawed"] if f["kind"] == "maths")
     assert any(m[3] for m in move.finditer(maths))  # the seeded flaw is actually present
+
+
+def test_rejudge_rescores_a_finished_engagement_without_rerunning_it(tmp_path, monkeypatch):
+    import json
+
+    from consultant.evals import run_system
+    from consultant.evals.judge import OUTCOME, PROCESS
+
+    class Judge(ScriptedLLM):
+        def __init__(self, score):
+            super().__init__()
+            self.score = score
+
+        def ProcessVerdict(self, user):
+            assert "ISSUE TREE" in user
+            return {k: {"justification": "j", "score": self.score} for k in PROCESS}
+
+        def OutcomeVerdict(self, user):
+            return {k: {"justification": "j", "score": self.score} for k in OUTCOME}
+    import consultant.agents.engagement_manager as em
+    monkeypatch.setattr(em.Retriever, "load", classmethod(lambda cls, *a, **k: cls([])))
+    monkeypatch.setattr(run_system, "RESULTS", tmp_path / "results")
+    monkeypatch.setattr(run_system, "ROOT", tmp_path)
+    monkeypatch.setattr(run_system, "load_cases", lambda split: [BAKERY])
+    row = run_system.run_case(Judge(2), BAKERY, tmp_path / "engagements" / "sys", "dev")
+    (tmp_path / "results" / "sys").mkdir(parents=True)
+    (tmp_path / "results" / "sys" / f"{BAKERY.id}.json").write_text(json.dumps(row))
+    llm = Judge(4)
+    monkeypatch.setattr(run_system, "LLM", lambda **k: llm)
+    [new] = run_system.rejudge("sys")
+    assert new["overall"] == 4 and row["overall"] == 2
+    assert set(llm.calls) == {"ProcessVerdict", "OutcomeVerdict"}   # judge calls only
+    assert (tmp_path / "results" / "sys-rejudged" / f"{BAKERY.id}.json").exists()
