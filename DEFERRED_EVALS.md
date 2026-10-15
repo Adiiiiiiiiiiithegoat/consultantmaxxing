@@ -97,6 +97,32 @@ interview rules were checked on train cases 13+ only. Expected: system ~1.5-2 h 
 fewer questions but a reconcile step and prompt replies), baseline ~15 min, judge 36 Opus
 calls; roughly one 5-hour window, so a limit wait is possible (calls wait and resume).
 
+**Done 2026-10-16:** system 3.06 vs baseline 3.34 (untouched 6: 2.98 vs 3.37). The system
+wins structure, hypotheses and maths; loses key insight, recommendation, communication and
+efficiency.
+
+**Ablations (branch `ablations`).** Three variants on the same 12 train cases, each under
+its own name; the default system is unchanged.
+- A `ablation-a-opus`: `CONSULTANT_MODELS_FILE=models.claude-opus.yaml` (Opus for the
+  engagement manager and storyliner, incl. its repair pass), `claude` profile.
+- B `ablation-b-single`: `claude-single` profile (`synthesis: single`): pipeline as now up
+  to the decision model; one storyliner call writes from the problem statement, full
+  transcript, decision model and all facts; partner review; one revision if it blocks (also
+  reviewed); best-reviewed draft ships; repair pass as before.
+- C `ablation-c-baseplus`: `consult eval baseline --plus`: baseline + all playbooks in its
+  system prompt + an `analyse` action that runs the sandbox (max 4 runs on top of 8 questions).
+One line in a plain PowerShell terminal, resumable (rerun the same line after any stop):
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult eval system --split train --n 12 --name ablation-b-single --profile claude-single; uv run consult eval baseline --split train --n 12 --name ablation-c-baseplus --plus; $env:CONSULTANT_MODELS_FILE="models.claude-opus.yaml"; uv run consult eval system --split train --n 12 --name ablation-a-opus --profile claude; uv run python -m consultant.evals.report --compare system-train12-v2 baseline-train12 ablation-a-opus ablation-b-single ablation-c-baseplus
+```
+Prints one table per group (studied 6, untouched 6, all 12), one column per run, on the
+cases every run has finished. Order is cheapest first: B's investigation makes the same calls
+as system-v2, so it should replay from `.llm_cache` (only synthesis and judging are new); A
+is the expensive one (Opus for every manager call). Don't pick a winner from this: confirm it
+on 6 new train cases first: the next 6 in train order are p059, p065, p068, p073, p075, p081
+(their real interviews were among the 31 used, in aggregate only, to check the interview
+rules; no variant was built against them).
+
 ## 5. Phase 6: deliverables
 Gate ran offline (validator, live formulas, action titles). Deferred live check:
 | # | Check | Command | Pass criterion |

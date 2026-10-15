@@ -158,10 +158,13 @@ def eval_system(split: str = "train", n: int = typer.Option(None), name: str = N
 
 
 @eval_app.command("baseline")
-def eval_baseline(n: int = typer.Option(None), split: str = "test", name: str = "baseline"):
+def eval_baseline(n: int = typer.Option(None), split: str = "test", name: str = "baseline",
+                  plus: bool = typer.Option(False, help="baseline+ (ablation C): playbooks "
+                                            "in the prompt and the analysis sandbox")):
     """Single-model baseline (default: the test split)."""
     from consultant.evals import baseline
-    typer.echo(json.dumps(baseline.run(split, limit=n, name=name), indent=1, default=str))
+    typer.echo(json.dumps(baseline.run(split, limit=n, name=name, plus=plus), indent=1,
+                          default=str))
 
 
 @eval_app.command("facts")

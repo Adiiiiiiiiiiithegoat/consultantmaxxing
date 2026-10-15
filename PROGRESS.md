@@ -893,3 +893,36 @@ per clone with `git config core.hooksPath .githooks` (done here); `.gitattribute
 On the current tree (102 files) it finds nothing. Tests: unit checks plus a real `git commit`
 in a temp repo blocked and then allowed. CLAUDE.md rule 1 notes the hook and says case facts
 stay out of notes (the hook can't catch paraphrase).
+
+### 2026-10-16: ablation variants (branch `ablations`; offline only, nothing run live)
+12-case result (fixed judge, `system-train12-v2` vs `baseline-train12`): system 3.06 vs
+baseline 3.34; untouched 6: 2.98 vs 3.37. The system wins structure, hypotheses and maths
+and loses key insight, recommendation, communication and efficiency. Instead of more fixes,
+three variants behind config flags; the default system's prompts and flow are unchanged (its
+investigation calls are byte-identical, so cached runs still replay).
+- **A, Opus brain:** `config/models.claude-opus.yaml` = `extends: models.claude.yaml` with
+  engagement_manager and storyliner on Opus (the storyliner's repair pass follows the role).
+  `models_config()` now merges an `extends` base file section by section.
+- **B, single-brain synthesis:** budget profile `claude-single` (`claude` + `synthesis:
+  single`, YAML merge key). Pipeline as now through the decision model; the storyliner call
+  then gets `_full_context()` (problem as stated, the whole interview, the live decision model
+  with its full result incl. inputs, every fact unclipped; no hypotheses) instead of the
+  brief, with the same storyliner prompt and output contract. Two rounds: partner review; if
+  it blocks, one revision of the same call, which is also reviewed so `best_reviewed` can pick;
+  repair pass unchanged. Reading of "the partner reviews once": once per draft, two drafts max.
+- **C, baseline+:** `consult eval baseline --plus`. Baseline loop with all 11 playbooks and
+  the analysis templates in the system prompt (~24K chars) and a third action, `analyse`,
+  that runs the script in the sandbox (max 4 runs on top of the 8 questions; runs in
+  `engagements/<name>/<case>/`). The candidate sees each RESULT; the interviewer never does.
+  The judge's transcript is the interview only (efficiency is measured on it); the runs go in
+  the work record, as the system's analyses do. The conversation clip is 6000 tokens (the
+  baseline's 4000 would cut code and results first).
+- **Report:** `report --compare RUN ...` prints studied 6 / untouched 6 / all, one column per
+  run, on the cases every run has finished. On the existing runs it reproduces 3.06 vs 3.34.
+- Judge, simulator and rubric untouched. Tests: `tests/test_ablations.py` (A's merged config;
+  B's input, two rounds and best-draft shipping, default profile still on the brief with 3
+  rounds; C's prompt, sandbox results, failed run, budget end, clean transcript; compare
+  table). Offline suite: 158 passed.
+- **Untested live:** all three variants. Risks: Opus on Pro burns the window faster (A is
+  the long leg); B's full context is large on cases with many facts; C may spend its turns
+  analysing instead of asking. Launch command: DEFERRED_EVALS.md ("Ablations").

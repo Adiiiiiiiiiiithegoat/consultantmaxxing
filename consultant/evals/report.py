@@ -1,6 +1,7 @@
 """Write EVAL_REPORT.md from eval_results/: per-dimension scores, system vs baseline, tokens
 per run, Phase 7 gate verdict, and failure analysis by layer.
-Usage: uv run python -m consultant.evals.report [--system system-test] [--baseline baseline]"""
+Usage: uv run python -m consultant.evals.report [--system system-test] [--baseline baseline]
+       uv run python -m consultant.evals.report --compare RUN [RUN ...]   (side by side)"""
 
 import argparse
 import json
@@ -75,6 +76,29 @@ def split_report(system: list[dict], baseline: list[dict]) -> str:
     return "\n\n".join(f"### {name}\n" + table([r for r in system if keep(r)],
                                                 [r for r in baseline if keep(r)])
                        for name, keep in groups.items())
+
+
+def compare(runs: dict[str, list[dict]]) -> str:
+    """One column per run, on the cases every run has finished, for the studied, untouched
+    and combined groups (ablations: same cases, side by side)."""
+    common = set.intersection(*({r["case_id"] for r in rows} for rows in runs.values()))
+    groups = {"Studied 6": lambda c: c in STUDIED, "Untouched": lambda c: c not in STUDIED,
+              "All": lambda c: True}
+    out = []
+    for title, keep in groups.items():
+        sel = {n: [r for r in rows if r["case_id"] in common and keep(r["case_id"])]
+               for n, rows in runs.items()}
+        n = len(next(iter(sel.values())))
+        out += ["", f"### {title} (n = {n})"]
+        if not n:
+            continue
+        ds = {name: dims(rows) for name, rows in sel.items()}
+        out += ["| Dimension | " + " | ".join(runs) + " |", "|---" * (len(runs) + 1) + "|"]
+        out += [f"| {k} | " + " | ".join(f"{ds[name][k]:.2f}" for name in runs) + " |"
+                for k in RUBRIC]
+        out.append("| **overall** | " + " | ".join(
+            f"**{sum(r['overall'] for r in rows) / n:.2f}**" for rows in sel.values()) + " |")
+    return "\n".join(out)
 
 
 def failures(rows: list[dict]) -> Counter:
@@ -154,7 +178,12 @@ def main(argv=None):
     p.add_argument("--out", default=str(ROOT / "EVAL_REPORT.md"))
     p.add_argument("--split", action="store_true", help="print studied / untouched / combined "
                    "tables instead of writing the report")
+    p.add_argument("--compare", nargs="+", metavar="RUN", help="print one column per run "
+                   "(studied / untouched / all) instead of writing the report")
     a = p.parse_args(argv)
+    if a.compare:
+        print(compare({n: load_rows(ROOT / "eval_results", n) for n in a.compare}))
+        return
     if a.split:
         r = ROOT / "eval_results"
         print(split_report(load_rows(r, a.system), load_rows(r, a.baseline)))

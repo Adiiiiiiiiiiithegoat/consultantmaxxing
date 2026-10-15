@@ -8,6 +8,9 @@ Case mode: evidence comes from the interviewer simulator (the 'client'). Real mo
 Research Associates on the open web. Every stage is a workspace step, so a killed run
 resumes where it stopped. Budget: investigation gets 70% of the profile's tokens, synthesis
 the rest, so a capped run still delivers (with open questions).
+
+Ablation B (budget profile with `synthesis: single`): the storyliner writes from the full
+context (_full_context) instead of the brief, and gets at most one revision.
 """
 
 import json
@@ -491,6 +494,22 @@ class Engagement:
                 f"EVIDENCE:\n{evidence_text(self.ws, verified_only=True)}\n\nOPEN QUESTIONS: "
                 f"{'; '.join(st.open_questions) or 'none'}")
 
+    def _full_context(self) -> str:
+        """Ablation B (profile `synthesis: single`): what one writer sees instead of the brief:
+        the problem as the client stated it, the whole interview, the decision model with its
+        inputs and every fact in full (no hypotheses, no clipping)."""
+        st, eid = self.ws.state, self.ws.state.engagement_id
+        convo = "\n".join(f"CANDIDATE: {e['question']}\nINTERVIEWER: {e['reply']}"
+                          for e in (self.iv.log if self.iv else [])) or "(no interview)"
+        live = [a for a in st.analyses if a.ok and not a.superseded_by]
+        model = "\n".join(f"A{a.id[1:]}: {a.name}: {a.purpose}\n"
+                          f"{json.dumps(a.result, indent=1, default=str)}" for a in live)
+        facts = "\n".join(f"F{f.id}: {f.claim} | value={f.value} {f.unit} | period={f.period}"
+                          f" | source={f.source_type}" for f in self.ws.facts.facts(eid))
+        return (f"THE CLIENT'S PROBLEM, AS STATED: {st.problem_statement}\n\nFULL INTERVIEW "
+                f"TRANSCRIPT:\n{convo}\n\nRECONCILED DECISION MODEL (with its inputs):\n"
+                f"{model or '(none)'}\n\nALL FACTS:\n{facts or '(none)'}")
+
     def _finalise_real_mode(self) -> dict:
         """Verify citations; teach the primer index about industries it didn't know."""
         st = self.ws.state
@@ -546,19 +565,21 @@ class Engagement:
                                               self.prof["max_tokens"]
                                               - st.notes["investigate_tokens"])
         reviewed: list[tuple[storyliner.Draft, partner.Review]] = []
+        single = self.prof.get("synthesis") == "single"  # ablation B: one writer, one revision
+        brief, rounds = (self._full_context, 2) if single else (self._brief, MAX_REVIEW_ROUNDS)
         with self.llm.scoped(self.synthesis):
             try:
                 ws.step("model", self._reconcile)
                 draft = storyliner.Draft(**ws.step(
-                    "story0", lambda: storyliner.write(self.llm, self._brief()).model_dump()))
-                for r in range(MAX_REVIEW_ROUNDS):
+                    "story0", lambda: storyliner.write(self.llm, brief()).model_dump()))
+                for r in range(rounds):
                     rv = partner.Review(**ws.step(f"review{r}", lambda d=draft: self._review(d)))
                     reviewed.append((draft, rv))
-                    if rv.verdict == "approve" or r == MAX_REVIEW_ROUNDS - 1:
+                    if rv.verdict == "approve" or r == rounds - 1:
                         break
                     draft = storyliner.Draft(**ws.step(
                         f"story{r + 1}", lambda rv=rv, d=draft: storyliner.write(
-                            self.llm, self._brief(), partner.format_review(rv),
+                            self.llm, brief(), partner.format_review(rv),
                             previous=d).model_dump()))
             except BudgetExceeded as e:
                 stopped = stopped or str(e)

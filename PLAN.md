@@ -290,7 +290,11 @@ following only the README; UI renders a live run; full test suite green.
 - [x] One reconciled decision model before synthesis; older analyses superseded
 - [x] Calibrated confidence, rounded numbers, one open-questions list, no ids in client text
 - [x] History rewrite for a copyright leak; originality pre-commit hook (8-word runs, data/ and PDF paths)
-- [ ] Re-run on Claude: system on 12 train cases, baseline on the new 6; report studied vs untouched (command in DEFERRED_EVALS.md)
+- [x] Re-run on Claude: system on 12 train cases, baseline on the new 6; report studied vs untouched (system 3.06 vs baseline 3.34)
+- [x] Ablation variants behind config flags (branch `ablations`): A Opus brain, B single-brain synthesis, C baseline+
+- [x] Side-by-side report: `report --compare` (studied 6 / untouched 6 / all 12)
+- [ ] Run A, B and C on the same 12 train cases and compare with system-v2 and baseline (command in DEFERRED_EVALS.md)
+- [ ] Confirm the winner on 6 new train cases
 - [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
 
 ## 6. Later (not in this build)
