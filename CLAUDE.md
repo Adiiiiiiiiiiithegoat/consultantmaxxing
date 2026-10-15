@@ -15,6 +15,14 @@ at the start of every session.
    `data/derived/` or `data/index/` (gitignored). Playbooks in `skills/` ARE committed,
    so write them in original words: distil patterns, never copy sentences or cases.
    Before every commit, run `git status` and confirm no derived data is staged.
+   This includes case facts and figures in notes such as PROGRESS.md: describe failures
+   in the abstract ("a client reply never reached the storyliner"), never what a case says.
+   A pre-commit hook enforces the mechanical part: `.githooks/pre-commit` runs
+   `consultant/originality.py` on the staged files and blocks any 8-word run shared with
+   the source texts or extracted cases, and any `data/` or PDF path. Enable it once per
+   clone with `git config core.hooksPath .githooks`. Never bypass it (`--no-verify`); if it
+   fires, rewrite in your own words. It can't catch paraphrased case facts, so that part
+   is still on you.
 2. **Model-agnostic.** All LLM calls go through `consultant/llm/`. No provider SDK
    imports anywhere else. Models are chosen per role in `config/models.yaml`.
    Today the only keys are Groq free tier + local Ollama; Claude/OpenAI must be

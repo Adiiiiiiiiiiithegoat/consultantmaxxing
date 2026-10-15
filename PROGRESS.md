@@ -848,3 +848,48 @@ Built against the 6 studied train cases' failure modes; nothing tuned on the tes
   existing analyses).
 - Offline suite: 149 passed. Step 3 command: DEFERRED_EVALS.md ("Re-run after the
   context-loss fixes").
+
+### 2026-10-15: history rewrite for a copyright leak + originality pre-commit hook
+**Step 3 (12-case re-run) has not run:** on 2026-10-15 no `system-train12-v2`,
+`baseline-train12`, engagements or traces existed in this checkout, the worktrees or the other
+clones. The launch command in DEFERRED_EVALS.md is unchanged and still to run.
+
+**Audit** (every blob, all branches, local and remote; 63 commits). Method: 12-word and
+8-word shingle overlap with the extracted casebook and Bridgeway text and the extracted
+cases, a 6-word pass against the casebook, a pass for 3-word phrases unique to one case,
+a scan of added lines for case-specific nouns, risky paths, fixtures and commit messages.
+Found (no details here, by design):
+1. ab89e48 (and 0988d9f, which carried it): PROGRESS.md diagnosis entry with one verbatim
+   casebook sentence plus case figures and case facts for two studied cases.
+2. 9ae6d84: an 8-word casebook candidate phrase in a tests/test_simulator.py string.
+3. 7671900: a tests/test_deliverables.py example answer restating a case fact.
+4. a3f1343: a made-up search query in tests/test_interview.py that echoed a case's query
+   (no case fact; changed to be safe).
+Clean: no data/, PDF, derived, index, eval_results, engagements or traces path ever
+committed; claude_cli fixtures hold no case text; commit messages clean; 8-word skills hits
+match only our own notes. The shingle checks did not catch #3 and #4 (paraphrase level);
+they were found by the noun scan.
+
+**Rewrite** (`git filter-repo` via uvx, two blob-callback passes with exact old -> new
+strings; local mirror backup at `D:/Projects/consultantmaxxing-prerewrite-backup.git`,
+which still holds the old objects: delete it once satisfied). Rewritten branches (old ->
+new tip): claude-provider ab89e48 -> 45e9728, fix-context-loss 90730b0 -> a6d4e86 (37e1633,
+the earlier scrub commit, became empty and was dropped), main f4b8187 -> e1745ec (local only),
+answer-quality 9c3c7de -> 02e0ec5 (local only). Unchanged: eval-fairness, overnight-fixes,
+and the public main 765bed5. At every tip the only differences are the replaced strings.
+Force-pushed claude-provider (lease on ab89e48); pushed fix-context-loss (new on the remote).
+Local main and answer-quality weren't pushed: their public copy (main 765bed5) never had the
+leak. After the rewrite: tests pass, the audit finds nothing, and the four strings appear
+nowhere in history.
+
+**GitHub:** 0 forks, no PRs, no Actions runs. The old commits that were public (ab89e48,
+9ae6d84, 7671900) still resolve by SHA (API and web, HTTP 200); 0988d9f was never pushed
+(404). Removing them from GitHub needs a request to GitHub Support (sensitive data removal),
+citing those SHAs.
+
+**Hook:** `.githooks/pre-commit` -> `consultant/originality.py`: blocks staged text sharing an
+8-word run with the sources (12 missed the 11-word quote) and any data/ or PDF path; enable
+per clone with `git config core.hooksPath .githooks` (done here); `.gitattributes` keeps it LF.
+On the current tree (102 files) it finds nothing. Tests: unit checks plus a real `git commit`
+in a temp repo blocked and then allowed. CLAUDE.md rule 1 notes the hook and says case facts
+stay out of notes (the hook can't catch paraphrase).

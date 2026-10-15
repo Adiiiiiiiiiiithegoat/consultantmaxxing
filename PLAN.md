@@ -289,6 +289,7 @@ following only the README; UI renders a live run; full test suite green.
 - [x] Review loop keeps the previous draft's answer; ship the best-reviewed draft
 - [x] One reconciled decision model before synthesis; older analyses superseded
 - [x] Calibrated confidence, rounded numbers, one open-questions list, no ids in client text
+- [x] History rewrite for a copyright leak; originality pre-commit hook (8-word runs, data/ and PDF paths)
 - [ ] Re-run on Claude: system on 12 train cases, baseline on the new 6; report studied vs untouched (command in DEFERRED_EVALS.md)
 - [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
 
