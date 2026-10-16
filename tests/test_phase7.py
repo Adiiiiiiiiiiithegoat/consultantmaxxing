@@ -83,3 +83,14 @@ def test_backtests_skip_unverified_and_score(tmp_path, monkeypatch):
     out = backtests.run(include_unverified=True, llm=Scorer(), web=web, root=tmp_path / "eng")
     assert out["done"] == 3 and out["calls_correct"] == 3
     assert abs(out["key_point_recall"] - 2 / 3) < 1e-9
+
+
+def test_split_report_keeps_studied_and_untouched_cases_apart():
+    def row(cid, s):
+        return {"case_id": cid, "overall": s, "scores": {k: s for k in RUBRIC}}
+    studied, new = report.STUDIED[0], "iimb-p999-untouched"
+    out = report.split_report([row(studied, 4), row(new, 2)], [row(studied, 3), row(new, 3)])
+    s, u, c = out.split("### ")[1:]
+    assert "Studied" in s and "n = 1" in s and "+1.00" in s
+    assert "Untouched" in u and "n = 1" in u and "-1.00" in u
+    assert "Combined" in c and "n = 2" in c and "+0.00" in c

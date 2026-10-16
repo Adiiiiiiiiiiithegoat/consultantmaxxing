@@ -1,0 +1,9 @@
+# Ablation A ("Opus brain"): models.claude.yaml with Opus for the engagement manager and the
+# storyliner (its repair pass too, which runs as the storyliner role). Everything else as in
+# the base file. Use with CONSULTANT_MODELS_FILE=models.claude-opus.yaml and the `claude`
+# budget profile.
+extends: models.claude.yaml
+
+roles:
+  engagement_manager: {model: claude_cli/opus}
+  storyliner:         {model: claude_cli/opus}

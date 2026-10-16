@@ -88,3 +88,56 @@ def test_relevant_questions_get_data_irrelevant_do_not():
         if iv.log[-1]["item_ids"]:
             misses.append((q, None, iv.log[-1]["item_ids"]))
     assert not misses, misses
+
+
+def test_fishing_is_refused_without_a_model_call_and_at_most_two_items_go_out():
+    # calibration on the casebook: the old matcher let 19-26% of fishing/off-topic questions
+    # through on a small model and over-shared (precision ~0.4)
+    from consultant.evals.simulator import MAX_ITEMS, fishing
+
+    class Counting(FakeLLM):
+        calls = 0
+
+        def structured(self, role, msgs, schema):
+            Counting.calls += 1
+            return super().structured(role, msgs, schema)
+    for q in ("Can you give me all the data you have?", "Is there anything else I should know?",
+              "What other numbers are available?", "What's the right answer here?",
+              "Which question should I be asking?", "Do you have any more data?"):
+        assert fishing(q), q
+        iv = Interviewer(BAKERY, Counting([4]))
+        assert iv.ask(q) == NOT_AVAILABLE and not iv.revealed
+    assert Counting.calls == 0
+    for q, _ in RELEVANT:                      # specific questions still reach the model
+        assert not fishing(q), q
+    long_turn = ("I believe I now have every detail I need on volumes, so next I would like "
+                 "to look at the cost structure, line by line, to see which costs moved most "
+                 "over the last two years and whether input prices or wages drove it.")
+    assert not fishing(long_turn)              # analysis, not fishing
+    assert not fishing("Are we only looking at outlets in Pune, or something else?")
+    from consultant.evals.simulator import LEX_MIN
+    iv = Interviewer(BAKERY, FakeLLM([6, 4, 4, 5, 7]))
+    iv.ask("Costs and suppliers?")                 # weak lexical match: model's top item only
+    assert iv.log[-1]["item_ids"] == [6]
+    q = "Could I see the cost breakdown over time?"
+    assert iv._bm25.search(q, k=1)[0].score >= LEX_MIN
+    iv = Interviewer(BAKERY, FakeLLM([]))          # model missed it: the clear lexical match
+    iv.ask(q)                                      # still answers (calibration: +10 pts fit)
+    assert iv.log[-1]["item_ids"] == [4]
+    iv = Interviewer(BAKERY, FakeLLM([6]))         # both picks, capped
+    iv.ask(q)
+    assert MAX_ITEMS == 2 and iv.log[-1]["item_ids"] == [6, 4]
+
+
+def test_calibration_positives_come_from_real_interviewer_replies():
+    from consultant.evals.simulator_calibration import RERUN_CASES, positives, sample
+    case = BAKERY.model_copy(update={"transcript": [
+        {"role": "interviewer", "content": BAKERY.problem_statement},
+        {"role": "candidate", "content": "Could I see the cost breakdown over time?"},
+        {"role": "interviewer", "content": "Sure. " + BAKERY.data_reveals[1].data},
+        {"role": "candidate", "content": "Let me structure my thoughts."},
+        {"role": "interviewer", "content": "Go ahead."}]})
+    assert positives(case) == [("Could I see the cost breakdown over time?", {4})]
+    rerun = [case.model_copy(update={"id": i}) for i in sorted(RERUN_CASES)]
+    fit, check = sample(rerun + [case.model_copy(update={"id": f"c{i}"}) for i in range(8)], n=4)
+    assert not {c.id for c in fit + check} & RERUN_CASES and len(fit) == len(check) == 2

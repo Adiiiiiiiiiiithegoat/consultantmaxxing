@@ -54,15 +54,97 @@ Use a 5-case **train** subset (`--n 5`) for iteration; never iterate on the test
 **Re-run plan after the answer-quality changes (2026-10-14).** Use 6 train cases: the
 original 3 (p012, p017, p025) plus the next 3 in the train order (p031, p033, p039), which no
 fix was developed against. Same model for system and baseline.
+
+**On Claude via the Pro subscription** (`config/models.claude.yaml`: Sonnet for EM, research,
+analyst, storyliner, partner and baseline; Opus for the judge; Haiku for the interviewer and
+extraction; `claude` budget profile). No API key is used (llm/claude_cli.py strips it). One
+line in a plain PowerShell terminal (resumable: rerun the same line after any stop):
 ```
-uv run consult eval system --split train --n 6 --name system-train6
-uv run consult eval baseline --split train --n 6 --name baseline-train6
-uv run python -c "from consultant.evals.report import *; from consultant.config import ROOT;   print(gate(load_rows(ROOT/'eval_results','system-train6'), load_rows(ROOT/'eval_results','baseline-train6')))"
-uv run consult eval partner      # 5/5 blocking + clean approved
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult eval system --split train --n 6 --name system-train6 --profile claude; uv run consult eval baseline --split train --n 6 --name baseline-train6; uv run consult eval partner
 ```
+Then the comparison:
+```
+uv run python -c "from consultant.evals.report import *; from consultant.config import ROOT; print(gate(load_rows(ROOT/'eval_results','system-train6'), load_rows(ROOT/'eval_results','baseline-train6')))"
+```
+Expected time on Pro (from one measured case-mode engagement, 2026-10-14: 5 min 45 s, 35
+calls, ~140K tokens, ~4% of the 5-hour window): system ~35 min for 6 cases (~24% of a window);
+baseline ~15 min (~6-12%); judge 24 Opus calls ~15 min (not measured; ~12-24%); partner eval
+~1 min. About 1-1.5 hours and roughly half of one 5-hour window if it starts in a fresh
+window and nothing else (including Claude Code sessions) uses the plan meanwhile. If the
+limit is hit, calls wait and retry every 20 minutes until the window resets (worst case adds
+up to ~5 hours); nothing is lost.
+
 Report the original 3 and the new 3 separately as well as together. Fact-finding: report
-`accuracy_heldout`; after the user has checked `consultant/evals/fact_questions_fresh.yaml`,
-those 10 become the held-out set.
+`accuracy_heldout`; the 10 spot-checked questions in `consultant/evals/fact_questions_fresh.yaml`
+become the held-out set when that eval is next wired up.
+
+**Done 2026-10-14** (system 2.67 vs baseline 3.04; fixed-judge reference 2.63 vs 3.31, see
+PROGRESS.md). Superseded by the re-run below.
+
+**Re-run after the context-loss fixes (branch `fix-context-loss`).** System on the 6 studied
+train cases plus the next 6 in train order (p042, p044, p046, p049, p054, p056: nothing was
+developed against them). Baseline only on the new 6; the studied 6 reuse the baseline runs
+re-judged with the fixed judge (`baseline-train6-j2`, copied in). Same models config, fixed
+judge for everything. One line in a plain PowerShell terminal, resumable (rerun the same
+line after any stop):
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; New-Item -ItemType Directory -Force eval_results\baseline-train12 | Out-Null; Copy-Item eval_results\baseline-train6-j2\*.json eval_results\baseline-train12\; uv run consult eval system --split train --n 12 --name system-train12-v2 --profile claude; uv run consult eval baseline --split train --n 12 --name baseline-train12; uv run python -m consultant.evals.report --system system-train12-v2 --baseline baseline-train12 --split
+```
+The last command prints three tables: studied 6, untouched 6, combined. If the studied 6
+improve much more than the untouched 6, the fixes fitted the cases we read. Note: cases 7-12
+were in the simulator calibration set (the interviewer's matching, not the system); the new
+interview rules were checked on train cases 13+ only. Expected: system ~1.5-2 h (12 cases,
+fewer questions but a reconcile step and prompt replies), baseline ~15 min, judge 36 Opus
+calls; roughly one 5-hour window, so a limit wait is possible (calls wait and resume).
+
+**Done 2026-10-16:** system 3.06 vs baseline 3.34 (untouched 6: 2.98 vs 3.37). The system
+wins structure, hypotheses and maths; loses key insight, recommendation, communication and
+efficiency.
+
+**Ablations (branch `ablations`).** Three variants on the same 12 train cases, each under
+its own name; the default system is unchanged.
+- A `ablation-a-opus`: `CONSULTANT_MODELS_FILE=models.claude-opus.yaml` (Opus for the
+  engagement manager and storyliner, incl. its repair pass), `claude` profile.
+- B `ablation-b-single`: `claude-single` profile (`synthesis: single`): pipeline as now up
+  to the decision model; one storyliner call writes from the problem statement, full
+  transcript, decision model and all facts; partner review; one revision if it blocks (also
+  reviewed); best-reviewed draft ships; repair pass as before.
+- C `ablation-c-baseplus`: `consult eval baseline --plus`: baseline + all playbooks in its
+  system prompt + an `analyse` action that runs the sandbox (max 4 runs on top of 8 questions).
+One line in a plain PowerShell terminal, resumable (rerun the same line after any stop):
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult eval system --split train --n 12 --name ablation-b-single --profile claude-single; uv run consult eval baseline --split train --n 12 --name ablation-c-baseplus --plus; $env:CONSULTANT_MODELS_FILE="models.claude-opus.yaml"; uv run consult eval system --split train --n 12 --name ablation-a-opus --profile claude; uv run python -m consultant.evals.report --compare system-train12-v2 baseline-train12 ablation-a-opus ablation-b-single ablation-c-baseplus
+```
+Prints one table per group (studied 6, untouched 6, all 12), one column per run, on the
+cases every run has finished. Order is cheapest first: B's investigation makes the same calls
+as system-v2, so it should replay from `.llm_cache` (only synthesis and judging are new); A
+is the expensive one (Opus for every manager call). Don't pick a winner from this: confirm it
+on 6 new train cases first: the next 6 in train order are p059, p065, p068, p073, p075, p081
+(their real interviews were among the 31 used, in aggregate only, to check the interview
+rules; no variant was built against them).
+
+**Done 2026-10-16:** C won: 3.51 overall (untouched 6: 3.46) vs baseline 3.34 (3.37); A
+(Opus brain) 3.23, B (single-brain synthesis) 2.98.
+
+**Confirmation of C on the next 6 train cases (p059, p065, p068, p073, p075, p081).** No code
+change. Three runs: C with the current models, plain Sonnet baseline, and C with Opus as the
+agent (`models.claude-opus-agent.yaml`: only the `baseline` role moves to Opus; simulator and
+judge unchanged). `--n 18` takes the first 18 train cases; the runner skips any case whose
+result file exists, so the first 12 are seeded by copying: C's and the baseline's real
+12-case results (giving 18-case pools), and C's 12 as skip markers for the Opus run, deleted
+after it so that run holds only the new 6. One line in a plain PowerShell terminal,
+resumable (rerun the same line after any stop):
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; foreach ($r in "c-train18","baseline-train18","c-opus-new6") { New-Item -ItemType Directory -Force eval_results\$r | Out-Null }; Copy-Item eval_results\ablation-c-baseplus\*.json eval_results\c-train18\; Copy-Item eval_results\baseline-train12\*.json eval_results\baseline-train18\; Copy-Item eval_results\ablation-c-baseplus\*.json eval_results\c-opus-new6\; uv run consult eval baseline --split train --n 18 --name c-train18 --plus; uv run consult eval baseline --split train --n 18 --name baseline-train18; $env:CONSULTANT_MODELS_FILE="models.claude-opus-agent.yaml"; uv run consult eval baseline --split train --n 18 --name c-opus-new6 --plus; Get-ChildItem eval_results\ablation-c-baseplus\*.json | ForEach-Object { Remove-Item "eval_results\c-opus-new6\$($_.Name)" }; uv run python -m consultant.evals.report --compare c-train18 baseline-train18 c-opus-new6; uv run python -m consultant.evals.report --system c-train18 --baseline baseline-train18 --split
+```
+Output: `--compare` runs on the cases all three have, i.e. the new 6 (its "Studied 6" table
+is empty, "Untouched" and "All" are the new 6). `--split` pools C vs baseline: studied 6,
+untouched 12, and **Combined = all 18**. The summary file `eval_results/c-opus-new6.json` is
+written before the markers are deleted, so its averages include C's 12; use the tables, not
+that file. Expected time (from C's 12-case run: ~24 min of agent and judge calls): C ~12 min,
+baseline ~8 min, C-Opus ~15-25 min, about 45 min in all; a usage-limit wait resumes itself.
+Pass: C beats the baseline on the new 6 and on the pooled 18. If C-Opus beats C by a clear
+margin, the rebuild uses Opus for the agent.
 
 ## 5. Phase 6: deliverables
 Gate ran offline (validator, live formulas, action titles). Deferred live check:

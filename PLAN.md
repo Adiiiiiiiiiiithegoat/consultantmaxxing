@@ -276,9 +276,42 @@ following only the README; UI renders a live run; full test suite green.
 - [x] Validator checks the cited fact's period matches the claim's period
 - [x] Efficiency measured from the transcript (unanswered / no-new-info vs reference)
 - [x] Propose 10 fresh fact questions with sources (`fact_questions_fresh.yaml`)
-- [ ] User spot-checks the 10 fresh fact questions; they become the held-out set
-- [ ] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval
-- [ ] Simulator: 62-88% of questions go unanswered for both system and baseline; check item matching isn't too strict
+- [x] User spot-checks the 10 fresh fact questions (all 10 verified)
+- [x] Simulator calibrated on the casebook's real interviews (fishing filter, new prompt, model + lexical pick)
+- [x] Claude via the Pro subscription: claude_cli provider, models.claude.yaml, claude budget profile
+- [x] `consult compare <problem.md> <human_answer.md>`: blinded A/B, judged separately
+- [x] Live: smoke call per model; one case-mode engagement measured (5m45s, ~140K tokens, ~4% of a 5-hour window)
+- [x] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval (command in DEFERRED_EVALS.md)
+- [x] Diagnose the 6-case result: context loss, format bias, over-asking; partner fixture cost lines
+- [x] Judge fix: whole answer to the outcome call, final answer to the process call; re-judge stored runs
+- [x] Full client replies to every agent (no truncation, merged duplicates, problem statement in the brief)
+- [x] Case interview as a conversation: answer prompts, client questions only, no repeats, stop after 2 stale replies
+- [x] Review loop keeps the previous draft's answer; ship the best-reviewed draft
+- [x] One reconciled decision model before synthesis; older analyses superseded
+- [x] Calibrated confidence, rounded numbers, one open-questions list, no ids in client text
+- [x] History rewrite for a copyright leak; originality pre-commit hook (8-word runs, data/ and PDF paths)
+- [x] Re-run on Claude: system on 12 train cases, baseline on the new 6; report studied vs untouched (system 3.06 vs baseline 3.34)
+- [x] Ablation variants behind config flags (branch `ablations`): A Opus brain, B single-brain synthesis, C baseline+
+- [x] Side-by-side report: `report --compare` (studied 6 / untouched 6 / all 12)
+- [x] Run A, B and C on the same 12 train cases and compare with system-v2 and baseline (C 3.51, baseline 3.34, A 3.23, B 2.98)
+- [x] Confirm C on 6 new train cases: C 3.28, baseline 3.15, C with Opus 3.52; pooled 18 C 3.43 vs baseline 3.28
+- [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
+
+## 5b. Rebuild around the single agent (C)
+Start only if the confirmation holds. One tool-using agent replaces the multi-agent
+pipeline: C's loop (playbooks in the prompt, sandbox) plus research, citations and
+deliverables. The eval harness (simulator, judge, report, baseline, leakage and
+originality tests) stays as it is; `consult eval system` runs the new agent.
+- [ ] Pick the agent model (Sonnet or Opus) from the confirmation run
+- [ ] `consultant/agent.py`: one loop from baseline+ with ask / analyse / research / finish actions, budget and stop rules from budgets.yaml
+- [ ] Research action: the research associate + extractor behind one call; facts go to the fact store with URL + quote and come back with ids
+- [ ] Citations: the answer cites fact ids and assumption entries; the Phase 6 validator checks every claim and number
+- [ ] Deliverables: memo, storyline, model .xlsx and sources appendix built from the answer, sandbox results and fact store
+- [ ] Partner review behind a profile flag (off by default): one review, one revision, ship the better-reviewed draft
+- [ ] Real mode: same loop without the interviewer (ask off, research on)
+- [ ] `consult new`, `consult ui` and `consult eval system` run the new agent; old pipeline kept as `--legacy` until the new one beats it, then deleted
+- [ ] Offline tests with recorded responses for the loop, each action and the review flag
+- [ ] Deferred eval: new agent vs C vs baseline on the 18 train cases, partner flag on and off; then the test split once
 
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain

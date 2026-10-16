@@ -9,6 +9,18 @@ profiles:
     max_iterations: 2      # evidence/assess loops
     max_questions: 10      # case mode: questions to the client
     max_research: 3        # questions researched per iteration
+  claude: &claude          # Claude via the subscription CLI (models.claude.yaml): sized for a
+    max_tokens: 1000000    # strong model with long prompts (tokens incl. prompt-cache reads);
+    max_calls: 250         # the plan's 5-hour window, not money, is the real limit. Revisit
+    max_searches: 40       # after the first measured engagement (PROGRESS.md).
+    max_pages: 60
+    eval_cases: 6
+    max_iterations: 3
+    max_questions: 12      # the reference interviews have a median of 9 candidate turns
+    max_research: 4
+  claude-single:           # ablation B: the claude profile, but one storyliner call writes the
+    <<: *claude            # answer from the full transcript, the decision model and all facts;
+    synthesis: single      # one partner review, one revision if it blocks, best draft ships
   full:
     max_tokens: 400000
     max_calls: 800

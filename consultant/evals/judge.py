@@ -2,12 +2,15 @@
 
 What each dimension is judged on (the same for the system and the baseline):
 - PROCESS dimensions (scoping, structure, hypotheses, maths, evidence) are judged by the LLM
-  on everything the candidate visibly did: the interview transcript plus its work record (for
+  on everything the candidate visibly did: the interview transcript, its work record (for
   the system: the workspace's issue tree, hypotheses with status and evidence, analyses with
-  results, and a fact summary; the baseline keeps no workspace, so its transcript is its whole
-  work record).
+  results, and a fact summary; the baseline keeps no workspace) and, for both, the final
+  answer, so maths done in the answer counts (the baseline's p033 expected-value maths was
+  correct but scored 1 when the process call never saw the answer).
 - OUTCOME dimensions (key_insight, recommendation, communication) are judged on the final
-  answer alone, so a long or well-documented process can't lift the answer's score.
+  answer alone, so a long or well-documented process can't lift the answer's score. The
+  whole answer is shown (up to ANSWER_CLIP tokens, the same for both): at 900 tokens the
+  system's 7-9K-char answers lost their middle, i.e. every supporting argument.
 - MEASURED: efficiency is computed from the transcript, not judged (see efficiency()): both
   system and baseline used to score 1 with only a raw question count to go on.
 Two judge calls per submission, one per LLM group; the Verdict combines them."""
@@ -17,6 +20,8 @@ from pydantic import BaseModel, Field
 from consultant.knowledge.schema import Case
 from consultant.llm import LLM
 from consultant.llm.context import clip
+
+ANSWER_CLIP = 6000  # tokens; above any answer seen so far (8.6K chars, ~2.9K tokens)
 
 RUBRIC = {
     "scoping": "Clarified objective, scope, timeline and business model before solving. "
@@ -51,10 +56,11 @@ _BASE = ("You are a strict consulting-interview assessor. Score the candidate on
          "dimension below from 1 to 5 using the reference solution as ground truth. Do not "
          "reward length or confident tone. Justify each score in at most two short sentences."
          "\n\n")
-PROCESS_SYS = (_BASE + "You see the candidate's process: the interview transcript and its "
-               "work record (issue tree, hypotheses, analyses, facts gathered), if it kept one. "
-               "Judge how the candidate worked; for maths, judge the analyses and every number "
-               "used.\n\nRUBRIC:\n" + "\n".join(f"- {k}: {RUBRIC[k]}" for k in PROCESS))
+PROCESS_SYS = (_BASE + "You see the candidate's process: the interview transcript, its work "
+               "record (issue tree, hypotheses, analyses, facts gathered) if it kept one, and "
+               "its final answer. Judge how the candidate worked; for maths, judge the "
+               "analyses and every number used, including calculations shown in the final "
+               "answer.\n\nRUBRIC:\n" + "\n".join(f"- {k}: {RUBRIC[k]}" for k in PROCESS))
 OUTCOME_SYS = (_BASE + "You see only the candidate's final answer. An answer that misses the "
                "key insight cannot score above 2 on key_insight; one whose recommendation "
                "contradicts the evidence cannot score above 2 on recommendation.\n\nRUBRIC:\n"
@@ -141,13 +147,15 @@ def efficiency(case: Case, sub: Submission) -> Score:
 def judge(llm: LLM, case: Case, sub: Submission, role: str = "judge") -> Verdict:
     ref = f"REFERENCE SOLUTION\n{clip(reference(case), 1800)}\n\n"
     convo = "\n".join(f"{t['role'].upper()}: {t['content']}" for t in sub.transcript)
+    answer = clip(sub.final_answer, ANSWER_CLIP)
     process = (f"{ref}CANDIDATE TRANSCRIPT ({sub.questions_asked} questions, {sub.searches} "
                f"searches)\n{clip(convo, 2200)}\n\nCANDIDATE WORK RECORD\n"
-               f"{clip(sub.work, 1200) if sub.work else '(none kept: the transcript is all)'}")
+               f"{clip(sub.work, 1200) if sub.work else '(none kept)'}\n\n"
+               f"CANDIDATE FINAL ANSWER\n{answer}")
     p = llm.structured(role, [{"role": "system", "content": PROCESS_SYS},
                               {"role": "user", "content": process}], ProcessVerdict)
     o = llm.structured(role, [{"role": "system", "content": OUTCOME_SYS},
                               {"role": "user", "content": f"{ref}CANDIDATE FINAL ANSWER\n"
-                                                          f"{clip(sub.final_answer, 900)}"}],
+                                                          f"{answer}"}],
                        OutcomeVerdict)
     return Verdict(**p.model_dump(), **o.model_dump(), efficiency=efficiency(case, sub))

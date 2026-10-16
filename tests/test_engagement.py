@@ -123,7 +123,7 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     eng, ws, iv = engagement(tmp_path, llm)
     out = eng.run()
     st = ws.state
-    assert st.steps_done == ["scope", "plan", "iter0", "story0", "review0", "story1",
+    assert st.steps_done == ["scope", "plan", "iter0", "model", "story0", "review0", "story1",
                              "review1", "repair", "deliver"]
     assert st.problem_statement == BAKERY.problem_statement and st.case_type == "profitability"
     # clarifying + hypothesis questions went to the client; answers stored as sourced facts
@@ -333,16 +333,19 @@ def test_run_case_produces_judged_result(tmp_path):
     from consultant.evals.judge import MEASURED, OUTCOME, PROCESS, RUBRIC
 
     class Judged(ScriptedLLM):
-        # process dims see the transcript + workspace; outcome dims see the answer only
+        # process dims see the transcript + workspace + the answer (maths done in the answer
+        # counts, for the baseline as for the system); outcome dims see the answer only
         def ProcessVerdict(self, user):
             assert "CANDIDATE TRANSCRIPT" in user and "ISSUE TREE" in user
             assert "HYPOTHESES" in user and "ANALYSES" in user and "FACTS" in user
-            assert "CANDIDATE FINAL ANSWER" not in user
+            assert "CANDIDATE FINAL ANSWER" in user and "Unhedged butter" in user
             return {k: {"justification": "ok", "score": 3} for k in PROCESS}
 
         def OutcomeVerdict(self, user):
             assert "Unhedged butter" in user and "CANDIDATE TRANSCRIPT" not in user
             assert "ISSUE TREE" not in user
+            answer = user.split("CANDIDATE FINAL ANSWER")[1]  # what the client reads
+            assert "**Recommendation:**" in answer and not re.search(r"\b[FAS]\d+\b", answer)
             return {k: {"justification": "ok", "score": 3} for k in OUTCOME}
     groups = [set(PROCESS), set(OUTCOME), set(MEASURED)]
     assert set().union(*groups) == set(RUBRIC) and sum(map(len, groups)) == len(RUBRIC)
@@ -454,11 +457,14 @@ def test_partner_fixture_numbers_are_internally_consistent():
 
     def pct(a, b):
         return (b - a) / a * 100
-    # every "% change" stated for a cost line in the evidence matches the accounts
+    # every cost line states both years (so the lines visibly sum to both totals; listing
+    # only base-year values beside the current total read as 6 + 4 + 10 = 20, not 22) and
+    # its "% change" matches the accounts
     for line, (a, b) in acc["cost_lines"].items():
-        stated = re.search(rf"{line}[^;|]*?Rs {a:g} crore ([+-]?\d+)%|{line}[^;|]*?flat",
-                           s["evidence"])
+        stated = re.search(rf"{line}[^;|]*?Rs {a:g} crore to Rs {b:g} crore \(([+-]?\d+)%\)"
+                           rf"|{line}[^;|]*?Rs {a:g} crore flat", s["evidence"])
         assert stated, line
+        assert stated.group(1) is not None or a == b, line
         assert stated.group(1) is None or abs(float(stated.group(1)) - pct(a, b)) < 0.5, line
     assert re.search(rf"Profits fell {-pct(*acc['profit']):g}%", s["evidence"])
     a1 = re.search(r"'base_cost_cr': (\S+), 'current_cost_cr': (\S+), 'increase_pct': (\S+)}",
@@ -516,3 +522,132 @@ def test_rejudge_rescores_a_finished_engagement_without_rerunning_it(tmp_path, m
     assert new["scores"]["efficiency"] == row["scores"]["efficiency"]  # measured: unchanged
     assert set(llm.calls) == {"ProcessVerdict", "OutcomeVerdict"}   # judge calls only
     assert (tmp_path / "results" / "sys-rejudged" / f"{BAKERY.id}.json").exists()
+
+
+LONG_REPLY = ("The owners run several unrelated businesses and have never made baked goods "
+              "themselves, so every recipe is licensed from a family supplier. They are not "
+              "short of money for this turnaround. What they care about most is keeping the "
+              "brand local and never closing an outlet, even an unprofitable one, because the "
+              "founder promised staff in every neighbourhood a job for life.")
+
+
+def test_client_reply_reaches_the_brief_in_full_and_once(tmp_path):
+    # regression: replies were stored as "Client, asked '<question>': <reply>" and every agent
+    # saw the first 220 chars, i.e. ~82 chars of the reply; a reply with no digits got no
+    # extracted facts, so the rest never reached the storyliner, partner or assessor
+    from consultant.agents.engagement_manager import evidence_text
+    case = BAKERY.model_copy(update={"clarifying_qa": [
+        BAKERY.clarifying_qa[0].model_copy(update={"question": "owners background budget",
+                                                   "answer": LONG_REPLY})]})
+    llm = ScriptedLLM()
+    ws = Workspace.open("e1", root=tmp_path, mode="case", profile="dev")
+    eng = Engagement(llm, ws, interviewer=Interviewer(case, llm), retriever=Retriever([]))
+    ws.state.problem_statement = case.problem_statement
+    ws.state.scope = llm.Scope("") | {"restated_question": "What should the bakery do?"}
+    assert len(LONG_REPLY) > 300 and not any(c.isdigit() for c in LONG_REPLY)
+    eng.iv.ask = lambda q: LONG_REPLY
+    eng._ask_client(["What is the owners' background and budget?",
+                     "Do the owners have money for this?"])           # same reply twice
+    client = [f for f in ws.facts.facts("e1") if f.source_type == "client"]
+    assert [f.claim for f in client] == [LONG_REPLY]                   # stored whole, once
+    for text in (evidence_text(ws, verified_only=True), eng._brief()):
+        assert LONG_REPLY in text and "job for life" in text
+    assert case.problem_statement in eng._brief()       # the problem as the client put it
+
+
+def test_p033_ships_the_best_reviewed_draft_and_revisions_see_the_previous_one(tmp_path):
+    # regression (p033, contents synthetic): drafts 0 and 1 recommended option A; the partner's
+    # counterarguments flipped draft 2 to option B, whose review found a critical flaw, and
+    # with no rounds left the flipped last draft shipped. Now the reviewed draft with the
+    # fewest blocking issues ships, and each revision is written from the previous draft.
+    def issue(sev="major"):
+        return {"kind": "unsupported_claim", "severity": sev, "where": "x", "detail": "d"}
+    blocking = [[issue()] * 6, [issue()] * 3, [issue("critical")] + [issue()] * 5]
+    answers = ["Option A, outsource the excess.", "Option A, outsource the excess.",
+               "Option B, buy the software."]
+
+    class Flip(ScriptedLLM):
+        stories = 0
+        story_inputs: list[str] = []
+
+        def StoryDraft(self, user):
+            self.story_inputs.append(user)
+            d = super().StoryDraft(user)
+            d["answer"] = answers[self.stories]
+            self.stories += 1
+            return d
+
+        def Review(self, user):
+            self.reviews += 1
+            return {"issues": blocking[self.reviews - 1], "strongest_counterargument": "B",
+                    "ceo_questions": ["a", "b", "c"], "agrees_with_client_prior": False,
+                    "prior_agreement_justified": False, "verdict": "revise"}
+    llm = Flip()
+    eng, ws, _ = engagement(tmp_path, llm)
+    out = eng.run()
+    assert llm.reviews == 3 and ws.state.notes["shipped_draft"] == "story1"
+    assert out["draft"].answer == answers[1]                     # not the flipped last draft
+    unresolved = ws.state.notes["unresolved_review"]
+    assert len(unresolved) == 3 and all(i["severity"] == "major" for i in unresolved)
+    assert "YOUR PREVIOUS DRAFT" not in llm.story_inputs[0]
+    assert answers[0] in llm.story_inputs[1] and answers[1] in llm.story_inputs[2]
+    assert all("Keep its recommendation unless a BLOCKING issue" in s
+               for s in llm.story_inputs[1:])
+
+
+def test_best_reviewed_prefers_fewer_blocking_then_fewer_critical_then_later():
+    from consultant.agents.engagement_manager import best_reviewed
+    from consultant.agents.partner import Issue
+
+    def rv(*sevs):
+        return Review(issues=[Issue(kind="maths", severity=s, where="", detail="")
+                              for s in sevs], strongest_counterargument="", ceo_questions=[],
+                      agrees_with_client_prior=False, prior_agreement_justified=True,
+                      verdict="revise")
+    d = None
+    assert best_reviewed([(d, rv("major", "major")), (d, rv("major"))]) == 1
+    assert best_reviewed([(d, rv("major")), (d, rv("critical"))]) == 0
+    assert best_reviewed([(d, rv("major")), (d, rv("major"))]) == 1
+    assert best_reviewed([(d, rv("minor", "minor")), (d, rv("major"))]) == 0  # minor: comment
+
+
+def test_one_reconciled_model_supersedes_the_earlier_analyses(tmp_path):
+    # p033 had 10 analyses on conflicting assumptions; drafts swung between them. Before
+    # synthesis one model on consistent, explicit inputs replaces them in the brief.
+    from consultant.agents.engagement_manager import evidence_text
+
+    class Two(ScriptedLLM):
+        requests: list[str] = []
+
+        def Assessment(self, user):
+            a = super().Assessment(user)
+            a["analyses_needed"] = ["Option A value, capacity capped", "Option A value, uncapped"]
+            return a
+
+        def AnalysisCode(self, user):
+            self.requests.append(user)
+            if "RECONCILED" in user or "reconciled decision model" in user:
+                return {"name": "decision_model", "purpose": "one model",
+                        "code": "RESULT = {'inputs': {'price': 30}, 'assumptions': ['capacity "
+                                "uncapped, as the client said'], 'options': {'A': 74, 'B': 60},"
+                                " 'best': 'A', 'sensitivities': {'capped': {'A': 74, 'B': 9}}}"}
+            n = len(self.requests)
+            return {"name": f"option_value_{n}", "purpose": "x", "code": f"RESULT = {{'v': {n}}}"}
+    llm = Two()
+    eng, ws, _ = engagement(tmp_path, llm)
+    eng.run()
+    st = ws.state
+    model = st.notes["model"]["id"]
+    assert [a.id for a in st.analyses] == ["A1", "A2", "A3"] and model == "A3"
+    assert [a.superseded_by for a in st.analyses] == ["A3", "A3", None]
+    assert "option_value_1" in llm.requests[-1] and "option_value_2" in llm.requests[-1]
+    brief = evidence_text(ws, verified_only=True)
+    assert "A1: option_value_1 SUPERSEDED by A3" in brief and "{'v': 1}" not in brief
+    assert "A3 (RECONCILED DECISION MODEL" in brief and "'inputs': {'price': 30}" in brief
+
+
+def test_nothing_to_reconcile_with_one_analysis(tmp_path):
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM())
+    eng.run()
+    assert ws.state.notes["model"] == {"id": "A1", "note": "nothing to reconcile"}
+    assert ws.state.analyses[0].superseded_by is None

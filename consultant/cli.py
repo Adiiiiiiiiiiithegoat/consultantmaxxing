@@ -124,6 +124,22 @@ def report(system: str = "system-test", baseline: str = "baseline"):
 
 
 @app.command()
+def compare(problem: str = typer.Argument(..., help="markdown file with the client problem"),
+            human_answer: str = typer.Argument(..., help="markdown file with a human answer"),
+            name: str = typer.Option(None, help="output folder under engagements/"),
+            profile: str = typer.Option("claude", help="budget profile for the system run")):
+    """Run the system on a problem, blind both answers as A/B and judge each separately.
+    Set CONSULTANT_MODELS_FILE (e.g. models.claude.yaml) first."""
+    from consultant.evals import compare as cmp
+    name = name or f"compare-{_slug(Path(problem).stem)}-{datetime.now():%Y%m%d-%H%M}"
+    res = cmp.compare(Path(problem), Path(human_answer), name, profile)
+    typer.echo(f"Blinded answers and scores in {res['dir']} (key/mapping.json reveals A/B)")
+    for who in ("system", "human"):
+        typer.echo(f"  {who:6} answer {res[who]['label']}: {res[who]['total']:.2f} "
+                   f"{res[who]['scores']}")
+
+
+@app.command()
 def ui(port: int = 8501):
     """Open the Streamlit dashboard."""
     app_path = Path(__file__).parent / "ui" / "app.py"
@@ -142,10 +158,13 @@ def eval_system(split: str = "train", n: int = typer.Option(None), name: str = N
 
 
 @eval_app.command("baseline")
-def eval_baseline(n: int = typer.Option(None), split: str = "test", name: str = "baseline"):
+def eval_baseline(n: int = typer.Option(None), split: str = "test", name: str = "baseline",
+                  plus: bool = typer.Option(False, help="baseline+ (ablation C): playbooks "
+                                            "in the prompt and the analysis sandbox")):
     """Single-model baseline (default: the test split)."""
     from consultant.evals import baseline
-    typer.echo(json.dumps(baseline.run(split, limit=n, name=name), indent=1, default=str))
+    typer.echo(json.dumps(baseline.run(split, limit=n, name=name, plus=plus), indent=1,
+                          default=str))
 
 
 @eval_app.command("facts")

@@ -90,3 +90,23 @@ def test_efficiency_is_measured_and_an_efficient_run_beats_a_wasteful_one():
                                    + [NOT_AVAILABLE] * w)).score for w in range(11)]
     assert scores == sorted(scores, reverse=True) and scores[0] == 5 and scores[-1] == 1
     assert efficiency(case, run([])).score == 3    # asked nothing: nothing wasted or gathered
+
+
+def test_judge_sees_the_whole_answer_and_process_sees_the_answer_too():
+    # the outcome call used to clip answers to 900 tokens (the system's 7-9K-char answers lost
+    # every argument) and the process call never saw the answer (the baseline's correct
+    # expected-value maths, done in its answer, scored maths 1)
+    from consultant.evals.judge import OUTCOME, PROCESS
+    from tests.test_engagement import BAKERY
+    seen = {}
+
+    class L:
+        def structured(self, role, msgs, schema):
+            seen[schema.__name__] = msgs[-1]["content"]
+            keys = PROCESS if schema.__name__ == "ProcessVerdict" else OUTCOME
+            return schema(**{k: {"justification": "", "score": 3} for k in keys})
+    answer = ("Outsource. " + "Supporting argument with maths: 0.6 x 90 + 0.4 x 50 = 74. "
+              * 150 + "LAST LINE")  # ~9K chars, longer than any answer so far
+    judge(L(), BAKERY, Submission(transcript=[], final_answer=answer))
+    for call in ("ProcessVerdict", "OutcomeVerdict"):
+        assert answer in seen[call], call

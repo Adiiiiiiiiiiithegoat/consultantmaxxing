@@ -13,8 +13,9 @@ import json
 from pathlib import Path
 
 from consultant.agents.engagement_manager import Engagement, hypotheses_text
-from consultant.agents.storyliner import Draft, render_text
+from consultant.agents.storyliner import Draft
 from consultant.config import ROOT
+from consultant.deliverables import answer_md
 from consultant.evals.common import code_version
 from consultant.evals.judge import Submission, judge
 from consultant.evals.simulator import Interviewer
@@ -56,12 +57,15 @@ def final_draft(ws: Workspace) -> Draft:
     return Draft(**n[f"story{last}"])
 
 
-def submission(iv: Interviewer, draft: Draft, searches: int = 0, work: str = "") -> Submission:
+def submission(iv: Interviewer, ws: Workspace, draft: Draft, searches: int = 0,
+               work: str = "") -> Submission:
+    """The final answer is what the client reads (deliverables.answer_md: no evidence ids,
+    rounded numbers, one open-questions list), not the internal draft dump."""
     t = [{"role": "interviewer", "content": iv.opening()}]
     for e in iv.log:
         t += [{"role": "candidate", "content": e["question"]},
               {"role": "interviewer", "content": e["reply"]}]
-    return Submission(transcript=t, final_answer=render_text(draft),
+    return Submission(transcript=t, final_answer=answer_md(ws, draft),
                       questions_asked=len(iv.log), searches=searches, work=work)
 
 
@@ -71,7 +75,7 @@ def run_case(llm, case: Case, root: Path, profile: str = "dev") -> dict:
     # replay the interview log so a resumed engagement's transcript is complete
     iv.log = ws.state.notes.get("interview_log", [])
     out = Engagement(llm, ws, interviewer=iv).run()
-    sub = submission(iv, out["draft"], work=work_record(ws))
+    sub = submission(iv, ws, out["draft"], work=work_record(ws))
     sub.tokens = out["tokens"]
     verdict = judge(llm, case, sub)
     return {"case_id": case.id, "case_type": case.case_type, "code_version": code_version(),
@@ -109,20 +113,32 @@ def run_cases(split: str = "train", n: int | None = 3, name: str = "system-train
 
 
 def rejudge(name: str = "system-train", out: str | None = None) -> list[dict]:
-    """Re-score finished case-mode engagements with the current judge (no engagement calls):
-    same transcript, workspace and delivered draft, new verdict. Writes eval_results/<out>/."""
+    """Re-score finished case-mode runs with the current judge (no engagement calls): same
+    transcript and delivered answer, new verdict. System rows are rebuilt from the workspace;
+    baseline rows carry their submission. Writes eval_results/<out>/; resumable."""
     out_dir = RESULTS / (out or f"{name}-rejudged")
     out_dir.mkdir(parents=True, exist_ok=True)
     llm = LLM(tracer=Tracer(run_id=f"eval-{out_dir.name}"))
     cases = {c.id: c for split in ("train", "test") for c in load_cases(split)}
     rows = []
     for p in sorted((RESULTS / name).glob("*.json")):
+        if (out_dir / p.name).exists():
+            rows.append(json.loads((out_dir / p.name).read_text(encoding="utf-8")))
+            continue
         old = json.loads(p.read_text(encoding="utf-8"))
         case = cases[old["case_id"]]
-        ws = Workspace.load(f"case-{case.id}", root=ROOT / "engagements" / name)
-        iv = Interviewer(case, llm)
-        iv.log = ws.state.notes.get("interview_log", [])
-        verdict = judge(llm, case, submission(iv, final_draft(ws), work=work_record(ws)))
+        if "submission" in old:
+            sub = Submission(**old["submission"])
+        else:
+            ws = Workspace.load(f"case-{case.id}", root=ROOT / "engagements" / name)
+            iv = Interviewer(case, llm)
+            iv.log = ws.state.notes.get("interview_log", [])
+            sub = submission(iv, ws, final_draft(ws), work=work_record(ws))
+        try:
+            verdict = judge(llm, case, sub)
+        except QuotaExhausted as e:
+            print(f"quota exhausted at {case.id}: {e}; rerun to resume", flush=True)
+            break
         row = {**old, "judge_version": code_version(), "scores": verdict.scores(),
                "overall": verdict.overall(), "verdict": verdict.model_dump()}
         (out_dir / p.name).write_text(json.dumps(row, indent=1, ensure_ascii=False),
@@ -153,6 +169,7 @@ def main(argv=None):
     c.add_argument("--profile", default="dev")
     j = sub.add_parser("rejudge")
     j.add_argument("name")
+    j.add_argument("--out", default=None)
     r = sub.add_parser("real")
     r.add_argument("question")
     r.add_argument("--name", default="real")
@@ -161,7 +178,7 @@ def main(argv=None):
     if a.cmd == "cases":
         res = run_cases(a.split, a.n, a.name or f"system-{a.split}", a.profile)
     elif a.cmd == "rejudge":
-        res = {r["case_id"]: r["scores"] for r in rejudge(a.name)}
+        res = {r["case_id"]: r["scores"] for r in rejudge(a.name, a.out)}
     else:
         res = run_real(a.question, a.name, a.profile)
     print(json.dumps(res, indent=1, default=str))

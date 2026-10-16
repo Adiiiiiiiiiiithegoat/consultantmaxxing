@@ -1,7 +1,8 @@
 """The only module that talks to model providers. Everything else asks for a *role*.
 
-All providers are reached through the OpenAI-compatible chat API (Groq, Ollama, OpenAI,
-Anthropic's compatibility endpoint), so swapping models is a config change.
+Providers are reached through the OpenAI-compatible chat API (Groq, Ollama, OpenAI,
+Anthropic's compatibility endpoint) or, for a provider with `type: claude_cli`, through the
+Claude Code CLI on the user's subscription (llm/claude_cli.py). Swapping is a config change.
 Every call: context fit -> disk cache -> budget -> rate limiter -> retry/backoff -> trace.
 """
 
@@ -20,6 +21,7 @@ import openai
 from pydantic import BaseModel, ValidationError
 
 from consultant.config import ROOT, models_config
+from consultant.llm import claude_cli
 from consultant.llm.cache import DiskCache
 from consultant.llm.context import estimate_tokens, fit
 from consultant.llm.limiter import QuotaExhausted, RateLimiter, RequestTooLarge
@@ -94,12 +96,13 @@ class LLM:
     def __init__(self, config: dict | None = None, *, tracer: Tracer | None = None,
                  budget: Budget | None = None, cache_dir: Path = ROOT / ".llm_cache",
                  http_client: httpx.Client | None = None, sleep=time.sleep,
-                 max_retries: int = 5, clock=time.time):
+                 max_retries: int = 5, clock=time.time, cli_runner=None):
         self.cfg = config or models_config()
         self.tracer, self.budget = tracer, budget
         self.cache = DiskCache(cache_dir / "responses")
         self.state_dir = cache_dir / "limits"
         self.http_client, self.sleep, self.clock = http_client, sleep, clock
+        self.cli_runner = cli_runner or claude_cli.default_runner
         self.max_retries = max_retries
         self._limiters: dict[str, RateLimiter] = {}
         self._clients: dict[str, openai.OpenAI] = {}
@@ -247,6 +250,8 @@ class LLM:
         for b in ([] if local else self._budgets()):
             b.check("calls")
             b.check("tokens", est)
+        if self.cfg["providers"][provider].get("type") == "claude_cli":
+            return self._call_cli(role, model, name, messages, est, key, payload, use_cache)
         kw = {k: v for k, v in params.items() if v is not None}  # null = unset this param
         if tools:
             kw["tools"] = tools
@@ -291,6 +296,34 @@ class LLM:
                 + usage.get("completion_tokens", 0) * spec.get("price_out", 0)) / 1e6
         self._trace("llm", role=role, model=model, cached=False, key=key, seconds=round(secs, 3),
                     cost_usd=cost, finish_reason=choice.finish_reason, key_index=ki, **usage)
+        if use_cache:
+            self.cache.set(key, {"request": payload, "completion": asdict(out)})
+        return out
+
+    def _call_cli(self, role, model, name, messages, est, key, payload, use_cache):
+        """Claude Code CLI call (subscription). No rate limiter: the plan's limits are
+        enforced server-side and waited out in claude_cli.call. Sampling params
+        (temperature, max_tokens) aren't exposed by the CLI and are ignored."""
+        p = self.cfg["providers"][model.split("/", 1)[0]]
+        try:
+            r = claude_cli.call(name, messages, runner=self.cli_runner, sleep=self.sleep,
+                                trace=self._trace, limit_wait=p.get("limit_wait_s", 1200),
+                                max_limit_wait=p.get("max_limit_wait_h", 72) * 3600)
+        except claude_cli.UsageLimit as e:  # waited the maximum: stop cleanly, resume later
+            raise QuotaExhausted(f"{model}: Claude usage limit ({e})") from e
+        except claude_cli.CLIError as e:
+            raise LLMError(str(e)) from e
+        usage = {k: r.usage[k] for k in ("prompt_tokens", "completion_tokens", "total_tokens")}
+        for b in self._budgets():
+            b.charge("calls")
+            b.charge("tokens", usage["total_tokens"] or est)
+        out = Completion(content=r.content.strip(), model=model, usage=usage,
+                         finish_reason=r.finish_reason)
+        self._trace("llm", role=role, model=model, cached=False, key=key,
+                    seconds=round(r.seconds, 3), cost_usd=r.cost_usd,
+                    finish_reason=r.finish_reason, served_by=r.model, windows=r.windows,
+                    cache_write_tokens=r.usage["cache_write_tokens"],
+                    cache_read_tokens=r.usage["cache_read_tokens"], **usage)
         if use_cache:
             self.cache.set(key, {"request": payload, "completion": asdict(out)})
         return out

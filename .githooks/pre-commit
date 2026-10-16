@@ -1,0 +1,4 @@
+#!/bin/sh
+# CLAUDE.md rule 1: block commits that stage copyrighted source text or data/ files.
+# Enable once per clone: git config core.hooksPath .githooks
+exec uv run --project "$(dirname "$0")/.." --quiet python -m consultant.originality
