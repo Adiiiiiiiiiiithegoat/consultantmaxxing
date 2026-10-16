@@ -353,7 +353,7 @@ def test_run_case_produces_judged_result(tmp_path):
     orig = em.Retriever.load
     em.Retriever.load = classmethod(lambda cls, *a, **k: cls([]))
     try:
-        row = run_system.run_case(Judged(), BAKERY, tmp_path, "dev")
+        row = run_system.run_case(Judged(), BAKERY, tmp_path, "dev", legacy=True)
     finally:
         em.Retriever.load = orig
     assert all(row["scores"][k] == 3 for k in PROCESS + OUTCOME)   # LLM-judged dims
@@ -510,7 +510,8 @@ def test_rejudge_rescores_a_finished_engagement_without_rerunning_it(tmp_path, m
     monkeypatch.setattr(run_system, "RESULTS", tmp_path / "results")
     monkeypatch.setattr(run_system, "ROOT", tmp_path)
     monkeypatch.setattr(run_system, "load_cases", lambda split: [BAKERY])
-    row = run_system.run_case(Judge(2), BAKERY, tmp_path / "engagements" / "sys", "dev")
+    row = run_system.run_case(Judge(2), BAKERY, tmp_path / "engagements" / "sys", "dev",
+                              legacy=True)
     (tmp_path / "results" / "sys").mkdir(parents=True)
     (tmp_path / "results" / "sys" / f"{BAKERY.id}.json").write_text(json.dumps(row))
     llm = Judge(4)

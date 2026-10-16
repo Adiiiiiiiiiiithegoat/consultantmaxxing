@@ -21,6 +21,8 @@ models:
   claude_cli/haiku:  {context: 1000000}
 
 roles:
+  agent:              {model: claude_cli/opus}     # the single agent (consultant/agent.py);
+                                                   # models.claude-sonnet.yaml: Sonnet, cheaper
   engagement_manager: {model: claude_cli/sonnet}
   research_associate: {model: claude_cli/sonnet}   # research synthesis: plans, gap checks, briefs
   analyst:            {model: claude_cli/sonnet}

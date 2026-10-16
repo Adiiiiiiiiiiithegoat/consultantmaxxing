@@ -944,3 +944,44 @@ investigation calls are byte-identical, so cached runs still replay).
   scoping, hypotheses, maths and evidence; loses efficiency (-0.22) and is level on the rest.
 - **Decision:** the confirmation holds; rebuild around C with Opus as the default agent
   (PLAN.md section 5b), Sonnet kept as a cheaper mode.
+
+### 2026-10-16: single agent (PLAN.md 5b, branch `single-agent`; offline only)
+`ablations` merged into main (81a4913). One tool-using agent replaces the pipeline as the
+default; the old pipeline stays behind `--legacy`.
+- **`consultant/agent.py`:** C's loop and prompt (playbooks + templates in the system prompt,
+  conversation clip raised to 12000 tokens for research output) with four actions. `ask`
+  (case mode): the interviewer's reply, whole, is stored as a verified client fact and shown as
+  `INTERVIEWER [F#]`. `analyse`: estimates listed with the script become assumptions S#
+  first (readable as `ASSUMPTIONS['S#']`), the run becomes analysis A# (model.xlsx, named from
+  the script's first comment line). `research`: one ResearchAssociate call (3 searches, 6
+  pages, 20K tokens); facts stored with URL + quote, ids and the brief back to the agent.
+  `finish`: the prose answer. An action with no budget left gets a note and the loop goes on;
+  with every action used up, the next turn is the answer (as in C). The log is saved every
+  turn, so a killed run resumes mid-loop without repeating actions.
+- **After the loop:** web facts verified (citation verifier); the same agent role writes the
+  prose answer up as a `StoryDraft` from the whole log, the evidence list and its answer
+  (storyliner prompt); partner review only with profile `agent-partner` (one review, one
+  revision if it blocks, `best_reviewed` picks); the repair pass and deliverables unchanged.
+- **Config:** role `agent` (Opus in models.claude.yaml; `models.claude-sonnet.yaml` = Sonnet;
+  the storyliner's model in the Groq files). Profiles `agent` (case: 8 questions, 4 analyses,
+  3 research, as C plus research), `agent-partner`, `agent-real` (10 research, 6 analyses).
+- **Wiring:** `consult new` (real mode, `agent-real`), `consult resume` (dispatches on the
+  workspace's engine), `consult eval system` (`--legacy`, and `--skip N` to run only later
+  cases), `run_system real`, UI (shows the agent's turns). Result rows now store the
+  submission, so `rejudge` works for agent runs.
+- **Judge input:** transcript = the interview only (as C); final answer = the client-facing
+  answer of the shipped draft (`answer_md`); work = analyses with results and research with
+  findings.
+- **Tests:** `tests/test_agent.py` (each action, citations, repair removing an unsourced
+  number, all deliverables, partner flag, real mode, caps, kill-and-resume, eval runner). Two
+  legacy tests now pass `legacy=True` (same assertions); the CLI quota-stop test covers both
+  engines. Offline suite: 165 passed.
+- **Live:** one wiring call (one agent turn on Haiku via claude_cli, real-mode prompt): valid
+  turn in 7.7 s. It packed five companies and several metrics into one research question, so
+  the research prompt now asks for one figure per question.
+- **Untested live / risks:** (1) the write-up step is new relative to C: the judge now reads
+  the structured answer, not C's prose, which may cost communication or key insight; gate 1
+  measures it. (2) Research in case mode can spend turns on public context instead of asking
+  the client. (3) The repair pass may strip numbers the agent computed in prose but never ran
+  in the sandbox. (4) Research questions may still be too broad for 3 searches.
+- **Next:** the three gates in DEFERRED_EVALS.md ("Single agent").

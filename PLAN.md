@@ -302,16 +302,20 @@ Start only if the confirmation holds. One tool-using agent replaces the multi-ag
 pipeline: C's loop (playbooks in the prompt, sandbox) plus research, citations and
 deliverables. The eval harness (simulator, judge, report, baseline, leakage and
 originality tests) stays as it is; `consult eval system` runs the new agent.
-- [ ] Pick the agent model (Sonnet or Opus) from the confirmation run
-- [ ] `consultant/agent.py`: one loop from baseline+ with ask / analyse / research / finish actions, budget and stop rules from budgets.yaml
-- [ ] Research action: the research associate + extractor behind one call; facts go to the fact store with URL + quote and come back with ids
-- [ ] Citations: the answer cites fact ids and assumption entries; the Phase 6 validator checks every claim and number
-- [ ] Deliverables: memo, storyline, model .xlsx and sources appendix built from the answer, sandbox results and fact store
-- [ ] Partner review behind a profile flag (off by default): one review, one revision, ship the better-reviewed draft
-- [ ] Real mode: same loop without the interviewer (ask off, research on)
-- [ ] `consult new`, `consult ui` and `consult eval system` run the new agent; old pipeline kept as `--legacy` until the new one beats it, then deleted
-- [ ] Offline tests with recorded responses for the loop, each action and the review flag
-- [ ] Deferred eval: new agent vs C vs baseline on the 18 train cases, partner flag on and off; then the test split once
+- [x] Agent model: Opus (C with Opus 3.52 vs 3.28 on Sonnet); Sonnet via `models.claude-sonnet.yaml`
+- [x] `consultant/agent.py`: C's loop with ask (case mode) / analyse / research / finish; caps from budget profile `agent`
+- [x] Research action: the research associate behind one call; facts stored with URL + quote, ids back to the agent
+- [x] Analyse action: sandbox run becomes A#; estimates the script uses become assumptions S#
+- [x] Write-up: the same agent turns its final answer into a draft citing F#/A#/S#; validator + repair pass unchanged
+- [x] Deliverables: memo, storyline, model .xlsx, sources appendix, assumptions page from the agent's work
+- [x] Partner review behind profile `agent-partner` (off by default): one review, one revision, better draft ships
+- [x] Real mode: same loop without the interviewer (`agent-real` profile, ask off)
+- [x] `consult new`, `consult ui` and `consult eval system` run the agent; old pipeline kept as `--legacy`
+- [x] Offline tests: loop and each action, citations, repair, deliverables, partner flag, real mode, caps, kill-and-resume
+- [ ] Gate: C with Opus on the first 12 train cases, then the agent on 18; agent must not fall below C with Opus
+- [ ] Gate: 2 real-mode smoke runs on public-company questions; complete deliverables, validation passed
+- [ ] Gate: partner on vs off on the 6 new train cases; decide whether the flag stays
+- [ ] Delete the legacy pipeline once the agent beats it; then the test split once
 
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain

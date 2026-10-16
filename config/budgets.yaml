@@ -21,6 +21,24 @@ profiles:
   claude-single:           # ablation B: the claude profile, but one storyliner call writes the
     <<: *claude            # answer from the full transcript, the decision model and all facts;
     synthesis: single      # one partner review, one revision if it blocks, best draft ships
+  agent: &agent            # the single agent (consultant/agent.py), case mode: C's caps
+    max_tokens: 2000000    # (8 questions, 4 analyses) plus research; tokens incl. cache reads
+    max_calls: 300
+    max_searches: 12
+    max_pages: 24
+    eval_cases: 18
+    max_questions: 8
+    max_analyses: 4
+    max_research: 3
+  agent-partner:           # the agent with partner review: one review, one revision, the
+    <<: *agent             # better-reviewed draft ships
+    partner: true
+  agent-real:              # real mode (`consult new`): no interviewer, research everything
+    <<: *agent
+    max_searches: 40
+    max_pages: 80
+    max_analyses: 6
+    max_research: 10
   full:
     max_tokens: 400000
     max_calls: 800

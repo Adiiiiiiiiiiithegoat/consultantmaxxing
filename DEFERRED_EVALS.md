@@ -146,6 +146,44 @@ baseline ~8 min, C-Opus ~15-25 min, about 45 min in all; a usage-limit wait resu
 Pass: C beats the baseline on the new 6 and on the pooled 18. If C-Opus beats C by a clear
 margin, the rebuild uses Opus for the agent.
 
+**Done 2026-10-16:** new 6: C 3.28, baseline 3.15, C with Opus 3.52. Pooled 18: C 3.43 vs
+baseline 3.28 (untouched 12: 3.37 vs 3.26). The rebuild uses Opus for the agent.
+
+**Single agent (PLAN.md 5b, branch `single-agent`).** `consult eval system` now runs the agent
+(`consultant/agent.py`); the commands above that ran the old pipeline need `--legacy` to
+reproduce. Run the gates in this order, each line in a plain PowerShell terminal; each is
+resumable (rerun the same line after any stop; finished cases are skipped).
+
+*Gate 1: no regression from wrapping C into the product (18 train cases).* C with Opus has only
+the new 6, so it first runs on the first 12 (seeded with its 6), then the agent on all 18:
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude-opus-agent.yaml"; New-Item -ItemType Directory -Force eval_results\c-opus-train18 | Out-Null; Copy-Item eval_results\c-opus-new6\*.json eval_results\c-opus-train18\; uv run consult eval baseline --split train --n 18 --name c-opus-train18 --plus; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult eval system --split train --n 18 --name agent-train18; uv run python -m consultant.evals.report --compare c-opus-train18 agent-train18 c-train18 baseline-train18
+```
+Pass: `agent-train18` overall >= `c-opus-train18` overall in the "All (n = 18)" table, and
+on the untouched 12. Expected: C-Opus 12 cases ~40-50 min; the agent ~3-5 min a case
+(Opus turns, research via Sonnet + Haiku, write-up and repair), ~1.5 h for 18. Allow two
+5-hour windows; a usage-limit wait resumes itself.
+
+*Gate 2: real mode, 2 smoke runs on public-company questions.* Same models file:
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult new "Why did Asian Paints' consolidated EBITDA margin change between FY2023-24 and FY2024-25, and what should management do about it?" --name real-smoke-asianpaints; uv run consult new "Should Eternal (Zomato) keep expanding Blinkit's dark-store network, given its FY2024-25 results?" --name real-smoke-eternal; foreach ($e in "real-smoke-asianpaints","real-smoke-eternal") { Get-ChildItem engagements\$e\deliverables | Select-Object Name; Get-Content engagements\$e\deliverables\validation.json }
+```
+If a run stops, continue it with `uv run consult resume <name>` (not `new` again). Pass: all
+seven files in `deliverables/` (memo.md, storyline.md/.json, model.xlsx, sources.md,
+assumptions.md, validation.json), `passed: true`, and every number in memo.md traceable to a
+row in sources.md, model.xlsx or assumptions.md. Read the memo's "Figures removed as
+unverified" list: a long list means the write-up isn't citing its evidence. ~10-20 min each.
+
+*Gate 3: partner on vs off (the 6 new train cases).* Run after gate 1 (it compares with
+`agent-train18`). The investigation and first draft make the same calls as gate 1, so they
+replay from the cache; only the reviews, revision and repair are new:
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult eval system --split train --n 18 --skip 12 --name agent-partner-new6 --profile agent-partner; uv run python -m consultant.evals.report --compare agent-train18 agent-partner-new6
+```
+The `--compare` tables cover the cases both runs have (the new 6). Keep the flag only if
+partner-on beats partner-off overall without losing key insight or recommendation; otherwise
+delete it. ~20-30 min.
+
 ## 5. Phase 6: deliverables
 Gate ran offline (validator, live formulas, action titles). Deferred live check:
 | # | Check | Command | Pass criterion |

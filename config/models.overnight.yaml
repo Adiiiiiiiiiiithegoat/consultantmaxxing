@@ -44,6 +44,9 @@ models:
 # role -> model + default params. `fallback` (model + param overrides) is used when the
 # primary's daily quota is gone or its server is unreachable.
 roles:
+  agent:                        # the single agent: the storyliner's model
+    model: groq/openai/gpt-oss-20b
+    params: {temperature: 0.4, max_tokens: 3000, reasoning_effort: low}
   engagement_manager:
     model: groq/openai/gpt-oss-20b
     params: {temperature: 0.3, max_tokens: 2500, reasoning_effort: low}
