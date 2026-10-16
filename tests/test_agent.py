@@ -66,6 +66,7 @@ class FakeRA:
 
     def __init__(self, llm, web, store, eid, caps=None, **k):
         self.store, self.eid = store, eid
+        FakeRA.allow_estimate = k.get("allow_estimate", True)
 
     def research(self, question, hypothesis_id=None, context=""):
         FakeRA.questions.append(question)
@@ -138,6 +139,7 @@ def test_case_mode_loop_actions_citations_and_deliverables(tmp_path, fake_resear
     f2 = ws.facts.get(2)
     assert f2.source_url == URL and f2.quote and "FINDINGS [F2]" in llm.prompts[3][1]["content"]
     assert FakeRA.questions == ["How many bakeries are there in Pune in 2025?"]
+    assert FakeRA.allow_estimate is False      # case mode: no model-guessed estimates
     assert fake_research == [eid]                               # web facts get verified
     # the write-up: same agent, its final answer, the whole work log and the evidence ids
     (brief,) = llm.story_inputs
@@ -185,6 +187,7 @@ def test_real_mode_has_no_interviewer_and_researches(tmp_path, fake_research):
     assert "there is no interviewer" in llm.prompts[1][1]["content"]   # ask refused, loop goes on
     assert "Research questions left: 10" in llm.prompts[0][1]["content"]   # agent-real caps
     assert FakeRA.questions and out["deliverables"]["memo"] == "deliverables/memo.md"
+    assert FakeRA.allow_estimate is True
     assert system_prompt("case") != system_prompt("real")
 
 

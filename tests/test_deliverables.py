@@ -396,3 +396,11 @@ def test_storyliner_is_told_to_calibrate_confidence():
     from consultant.agents.storyliner import STORY_SYS
     assert "low only when a specific missing fact would likely flip" in STORY_SYS
     assert "never in the prose the client reads" in STORY_SYS
+
+
+def test_list_outputs_of_an_analysis_are_citable():
+    """Gate 1: correct numbers held in a list in an analysis RESULT were removed as
+    unverified because lists were skipped."""
+    from consultant.deliverables.model_xlsx import _flatten
+    out = _flatten({"path": [5, 7.5, {"x": 1}], "cum": 2.5, "flag": True, "name": "y"})
+    assert out == {"path[0]": 5, "path[1]": 7.5, "path[2].x": 1, "cum": 2.5}

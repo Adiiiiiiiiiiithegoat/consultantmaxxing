@@ -35,7 +35,7 @@ from consultant.tracing import Budget, BudgetExceeded
 from consultant.workspace import Workspace
 
 LOOP_SHARE = 0.7          # of max_tokens; the write-up gets the rest plus what the loop leaves
-RESEARCH_CAPS = {"searches": 3, "pages": 6, "tokens": 20000}  # per research action
+RESEARCH_CAPS = {"searches": 3, "pages": 6, "tokens": 30000}  # per research action
 DEFAULTS = {"max_questions": 8, "max_analyses": 4, "max_research": 3}  # C's caps
 
 _ACTIONS = {
@@ -98,7 +98,9 @@ class AgentTurn(BaseModel):
 
 WRITE_UP = ("Write the final answer above up as the client deliverable. Keep its "
             "recommendation, key insight and reasoning; cite the evidence ids each claim and "
-            "number comes from (only ids listed in EVIDENCE).")
+            "number comes from (only ids listed in EVIDENCE). Make the first argument the "
+            "structure of the problem: the issue tree or framework you used, its branches, "
+            "and which branches the evidence ruled in or out.")
 
 
 class Agent:
@@ -192,7 +194,10 @@ class Agent:
     def _research(self, question: str) -> None:
         eid = self.ws.state.engagement_id
         self._add("research", question)
-        ra = ResearchAssociate(self.llm, self.web, self.ws.facts, eid, caps=RESEARCH_CAPS)
+        # case mode: no model-guessed estimate when the web finds nothing (the judge reads
+        # them as unsourced figures); the agent registers its own estimates via analyse
+        ra = ResearchAssociate(self.llm, self.web, self.ws.facts, eid, caps=RESEARCH_CAPS,
+                               allow_estimate=self.mode != "case")
         res = ra.research(question, context=f"CLIENT PROBLEM: {self.ws.state.problem_statement}")
         for kind in ("tokens", "calls", "searches", "pages"):
             self.loop_budget.charge(kind, res.spent.get(kind, 0))

@@ -164,6 +164,15 @@ on the untouched 12. Expected: C-Opus 12 cases ~40-50 min; the agent ~3-5 min a 
 (Opus turns, research via Sonnet + Haiku, write-up and repair), ~1.5 h for 18. Allow two
 5-hour windows; a usage-limit wait resumes itself.
 
+*Gate 1 rerun (after the 2026-10-17 fixes, PROGRESS.md).* Run 1 (`agent-train18`) failed:
+3.41 vs 3.53. Rerun the agent only; C with Opus is already done. Interview turns up to the
+first research action replay from the cache:
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult eval system --split train --n 18 --name agent-train18-v2; uv run python -m consultant.evals.report --compare c-opus-train18 agent-train18-v2 agent-train18
+```
+Pass: as gate 1 (`agent-train18-v2` >= `c-opus-train18` on all 18 and the untouched 12).
+Also check: all 18 within budget, and no "stopped" rows.
+
 *Gate 2: real mode, 2 smoke runs on public-company questions.* Same models file:
 ```
 cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; uv run consult new "Why did Asian Paints' consolidated EBITDA margin change between FY2023-24 and FY2024-25, and what should management do about it?" --name real-smoke-asianpaints; uv run consult new "Should Eternal (Zomato) keep expanding Blinkit's dark-store network, given its FY2024-25 results?" --name real-smoke-eternal; foreach ($e in "real-smoke-asianpaints","real-smoke-eternal") { Get-ChildItem engagements\$e\deliverables | Select-Object Name; Get-Content engagements\$e\deliverables\validation.json }

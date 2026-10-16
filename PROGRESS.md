@@ -985,3 +985,41 @@ default; the old pipeline stays behind `--legacy`.
   the client. (3) The repair pass may strip numbers the agent computed in prose but never ran
   in the sandbox. (4) Research questions may still be too broad for 3 searches.
 - **Next:** the three gates in DEFERRED_EVALS.md ("Single agent").
+
+### 2026-10-17: gate 1 failed; diagnosis and fixes (offline only)
+**Result** (`agent-train18` vs `c-opus-train18`): 3.41 vs 3.53 on 18, 3.38 vs 3.57 on the
+untouched 12; losses in maths, structure, recommendation; 10/18 within budget.
+- **Budget.** All 8 stopped runs died on the research action's *own* 20K-token cap, not the
+  engagement budget (they used 46K-182K of 2M). An unguarded call in the research associate
+  (the brief, after the gap check had used the brief's reserve) raised `BudgetExceeded`, which
+  the loop's handler took as "engagement over": 6 at the first research action, 2 at the
+  second, with questions and analyses still left. Every one shipped with no final answer
+  (written up from the raw log) and no sandbox analysis. Stopped runs: 3.42 vs C 3.68;
+  finished runs: 3.40 vs C 3.41. The whole gap sits in the stopped runs.
+- **Maths.** The repair pass removed figures in only 1 of 18 runs: 6 correct sandbox outputs
+  held in a *list* in an analysis RESULT (`_flatten` skipped lists, so they were never
+  citable). Scalar and nested-dict outputs were already citable. The other 7 maths losses
+  were all runs that researched: the web found nothing (14/26 searches timed out, 15/59
+  fetches 403), the research associate fell back to a model-guessed estimate, the agent
+  cited it, and the judge marked it as an unsourced or contradictory figure. C never
+  researched and "declined to invent figures".
+- **Structure.** All 10 structure losses are -1; the judge's note is nearly always "no
+  explicit issue tree was kept". The write-up (Answer / Why / numbered arguments) drops the
+  framework the prose answer had; C's prose answers carried it.
+- **Calls.** "187 vs 104" compares 18 runs with 12: `c-opus-train18.json` only counts the 12
+  it ran (the 6 seeded from `c-opus-new6` add 54). Like for like: C 158 (122 turns + 36
+  judge), agent 187 (119 turns + 18 write-ups + ~14 repairs + 36 judge). Loop turns are equal;
+  the extra ~30 calls are the write-up and repair, by design.
+
+**Fixes** (offline suite: 171 passed):
+1. Research cap never ends the engagement: the search loop and the brief are guarded; a cap
+   hit returns the facts found and a low-confidence brief. The gap check now needs twice the
+   brief reserve. Per-question cap 20K -> 30K (the research associate's default).
+2. Case mode: no model-guessed estimate when research finds nothing (`allow_estimate=False`);
+   the agent can still register its own estimates through `analyse`. Real mode unchanged.
+3. List values in an analysis RESULT are citable (`_flatten` walks lists; model.xlsx gets them).
+4. The write-up's first argument states the structure: the issue tree or framework, its
+   branches, and which the evidence ruled in or out.
+5. A failed web search is retried once after 5 s.
+Not done: cutting calls (the extra calls are the write-up and repair, which the product
+needs). If the rerun still loses on maths, try `max_research: 0` in case mode as an ablation.

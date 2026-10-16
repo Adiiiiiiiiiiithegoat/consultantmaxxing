@@ -313,6 +313,10 @@ originality tests) stays as it is; `consult eval system` runs the new agent.
 - [x] `consult new`, `consult ui` and `consult eval system` run the agent; old pipeline kept as `--legacy`
 - [x] Offline tests: loop and each action, citations, repair, deliverables, partner flag, real mode, caps, kill-and-resume
 - [ ] Gate: C with Opus on the first 12 train cases, then the agent on 18; agent must not fall below C with Opus
+- [x] Gate 1 run 1 failed (3.41 vs 3.53); diagnosed: research cap ended 8 runs, estimates, lists, structure
+- [x] Fix: research cap no longer ends the engagement; per-question cap 30K
+- [x] Fix: no model-guessed estimates in case mode; list outputs citable; structure up front; search retry
+- [ ] Gate 1 rerun: `agent-train18-v2` on the 18 train cases
 - [ ] Gate: 2 real-mode smoke runs on public-company questions; complete deliverables, validation passed
 - [ ] Gate: partner on vs off on the 6 new train cases; decide whether the flag stays
 - [ ] Delete the legacy pipeline once the agent beats it; then the test split once

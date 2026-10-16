@@ -401,3 +401,43 @@ def test_fresh_held_out_questions_are_sourced_and_not_used_anywhere():
     assert all(q["source"].startswith("https://") and float(q["answer"]) > 0 for q in fresh)
     code = Path(ff.__file__).parents[1]  # held out: nothing in consultant/ may load them
     assert not [p for p in code.rglob("*.py") if "fact_questions_fresh" in p.read_text("utf-8")]
+
+
+def test_cap_hit_mid_search_or_at_the_brief_never_escapes(tmp_path, monkeypatch):
+    """Gate 1: a research question's own token cap ended 8 of 18 engagements. The cap must
+    end the search only; the facts found so far still come back."""
+    from consultant.agents import research_associate as ra_mod
+    from consultant.tracing import BudgetExceeded
+    ra, _, _, _ = make(tmp_path, answered=False)
+    real_ask = ra._ask
+
+    def ask(system, user, schema):
+        if schema is ra_mod.Brief:
+            raise BudgetExceeded("tokens budget: scripted")
+        return real_ask(system, user, schema)
+
+    def extract(*a, **k):
+        raise BudgetExceeded("tokens budget: scripted")
+
+    monkeypatch.setattr(ra, "_ask", ask)
+    monkeypatch.setattr(ra_mod, "extract_facts", extract)
+    res = ra.research("What was Acme's revenue in FY2024?")
+    assert res.brief.confidence == "low" and res.brief.fact_ids == [] and res.brief.value is None
+
+
+def test_failed_search_is_retried_once(tmp_path):
+    class Flaky(Provider):
+        def __init__(self, fails):
+            super().__init__()
+            self.fails = fails
+
+        def search(self, query, max_results=8):
+            if self.fails:
+                self.fails -= 1
+                raise TimeoutError("scripted")
+            return super().search(query, max_results)
+
+    waits = []
+    web = Web(Flaky(1), cache_dir=tmp_path / "w1", sleep=waits.append)
+    assert len(web.search("acme revenue")) == 3 and len(waits) == 1
+    assert Web(Flaky(2), cache_dir=tmp_path / "w2", sleep=waits.append).search("acme") == []
