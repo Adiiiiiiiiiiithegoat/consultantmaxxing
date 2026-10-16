@@ -935,3 +935,12 @@ investigation calls are byte-identical, so cached runs still replay).
   train cases, plus C vs baseline pooled over 18. No code change: the first 12 are seeded by
   copying result files (the runner skips existing ones). Command: DEFERRED_EVALS.md.
 - **Next:** PLAN.md section 5b, rebuild around one agent (C), only if the confirmation holds.
+
+### Confirmation result (2026-10-16)
+- **New 6 train cases:** C 3.28, baseline 3.15, C with Opus as the agent 3.52. Opus gains
+  most in key insight (+0.50), recommendation (+0.83) and hypotheses (+0.50); maths dips
+  (4.50 vs 4.83).
+- **Pooled 18 (C vs baseline):** 3.43 vs 3.28; untouched 12: 3.37 vs 3.26 (+0.11). C wins
+  scoping, hypotheses, maths and evidence; loses efficiency (-0.22) and is level on the rest.
+- **Decision:** the confirmation holds; rebuild around C with Opus as the default agent
+  (PLAN.md section 5b), Sonnet kept as a cheaper mode.

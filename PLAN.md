@@ -294,7 +294,7 @@ following only the README; UI renders a live run; full test suite green.
 - [x] Ablation variants behind config flags (branch `ablations`): A Opus brain, B single-brain synthesis, C baseline+
 - [x] Side-by-side report: `report --compare` (studied 6 / untouched 6 / all 12)
 - [x] Run A, B and C on the same 12 train cases and compare with system-v2 and baseline (C 3.51, baseline 3.34, A 3.23, B 2.98)
-- [ ] Confirm C on 6 new train cases: C, baseline, C with Opus; pooled 18 C vs baseline (command in DEFERRED_EVALS.md)
+- [x] Confirm C on 6 new train cases: C 3.28, baseline 3.15, C with Opus 3.52; pooled 18 C 3.43 vs baseline 3.28
 - [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
 
 ## 5b. Rebuild around the single agent (C)
