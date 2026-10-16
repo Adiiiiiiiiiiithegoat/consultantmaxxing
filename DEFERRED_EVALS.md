@@ -123,6 +123,29 @@ on 6 new train cases first: the next 6 in train order are p059, p065, p068, p073
 (their real interviews were among the 31 used, in aggregate only, to check the interview
 rules; no variant was built against them).
 
+**Done 2026-10-16:** C won: 3.51 overall (untouched 6: 3.46) vs baseline 3.34 (3.37); A
+(Opus brain) 3.23, B (single-brain synthesis) 2.98.
+
+**Confirmation of C on the next 6 train cases (p059, p065, p068, p073, p075, p081).** No code
+change. Three runs: C with the current models, plain Sonnet baseline, and C with Opus as the
+agent (`models.claude-opus-agent.yaml`: only the `baseline` role moves to Opus; simulator and
+judge unchanged). `--n 18` takes the first 18 train cases; the runner skips any case whose
+result file exists, so the first 12 are seeded by copying: C's and the baseline's real
+12-case results (giving 18-case pools), and C's 12 as skip markers for the Opus run, deleted
+after it so that run holds only the new 6. One line in a plain PowerShell terminal,
+resumable (rerun the same line after any stop):
+```
+cd D:\Projects\consultantmaxxing; $env:CONSULTANT_MODELS_FILE="models.claude.yaml"; foreach ($r in "c-train18","baseline-train18","c-opus-new6") { New-Item -ItemType Directory -Force eval_results\$r | Out-Null }; Copy-Item eval_results\ablation-c-baseplus\*.json eval_results\c-train18\; Copy-Item eval_results\baseline-train12\*.json eval_results\baseline-train18\; Copy-Item eval_results\ablation-c-baseplus\*.json eval_results\c-opus-new6\; uv run consult eval baseline --split train --n 18 --name c-train18 --plus; uv run consult eval baseline --split train --n 18 --name baseline-train18; $env:CONSULTANT_MODELS_FILE="models.claude-opus-agent.yaml"; uv run consult eval baseline --split train --n 18 --name c-opus-new6 --plus; Get-ChildItem eval_results\ablation-c-baseplus\*.json | ForEach-Object { Remove-Item "eval_results\c-opus-new6\$($_.Name)" }; uv run python -m consultant.evals.report --compare c-train18 baseline-train18 c-opus-new6; uv run python -m consultant.evals.report --system c-train18 --baseline baseline-train18 --split
+```
+Output: `--compare` runs on the cases all three have, i.e. the new 6 (its "Studied 6" table
+is empty, "Untouched" and "All" are the new 6). `--split` pools C vs baseline: studied 6,
+untouched 12, and **Combined = all 18**. The summary file `eval_results/c-opus-new6.json` is
+written before the markers are deleted, so its averages include C's 12; use the tables, not
+that file. Expected time (from C's 12-case run: ~24 min of agent and judge calls): C ~12 min,
+baseline ~8 min, C-Opus ~15-25 min, about 45 min in all; a usage-limit wait resumes itself.
+Pass: C beats the baseline on the new 6 and on the pooled 18. If C-Opus beats C by a clear
+margin, the rebuild uses Opus for the agent.
+
 ## 5. Phase 6: deliverables
 Gate ran offline (validator, live formulas, action titles). Deferred live check:
 | # | Check | Command | Pass criterion |

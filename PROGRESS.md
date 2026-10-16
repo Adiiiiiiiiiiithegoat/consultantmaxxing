@@ -926,3 +926,12 @@ investigation calls are byte-identical, so cached runs still replay).
 - **Untested live:** all three variants. Risks: Opus on Pro burns the window faster (A is
   the long leg); B's full context is large on cases with many facts; C may spend its turns
   analysing instead of asking. Launch command: DEFERRED_EVALS.md ("Ablations").
+
+### Ablation result and confirmation setup (2026-10-16)
+- **Result (12 train cases):** C (baseline+) 3.51 overall, 3.46 on the untouched 6; baseline
+  3.34 / 3.37; A (Opus brain) 3.23; B (single-brain synthesis) 2.98.
+- **Confirmation, not yet run:** C, plain baseline, and C with Opus as the agent
+  (`config/models.claude-opus-agent.yaml`: only the `baseline` role on Opus) on the next 6
+  train cases, plus C vs baseline pooled over 18. No code change: the first 12 are seeded by
+  copying result files (the runner skips existing ones). Command: DEFERRED_EVALS.md.
+- **Next:** PLAN.md section 5b, rebuild around one agent (C), only if the confirmation holds.

@@ -293,9 +293,25 @@ following only the README; UI renders a live run; full test suite green.
 - [x] Re-run on Claude: system on 12 train cases, baseline on the new 6; report studied vs untouched (system 3.06 vs baseline 3.34)
 - [x] Ablation variants behind config flags (branch `ablations`): A Opus brain, B single-brain synthesis, C baseline+
 - [x] Side-by-side report: `report --compare` (studied 6 / untouched 6 / all 12)
-- [ ] Run A, B and C on the same 12 train cases and compare with system-v2 and baseline (command in DEFERRED_EVALS.md)
-- [ ] Confirm the winner on 6 new train cases
+- [x] Run A, B and C on the same 12 train cases and compare with system-v2 and baseline (C 3.51, baseline 3.34, A 3.23, B 2.98)
+- [ ] Confirm C on 6 new train cases: C, baseline, C with Opus; pooled 18 C vs baseline (command in DEFERRED_EVALS.md)
 - [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
+
+## 5b. Rebuild around the single agent (C)
+Start only if the confirmation holds. One tool-using agent replaces the multi-agent
+pipeline: C's loop (playbooks in the prompt, sandbox) plus research, citations and
+deliverables. The eval harness (simulator, judge, report, baseline, leakage and
+originality tests) stays as it is; `consult eval system` runs the new agent.
+- [ ] Pick the agent model (Sonnet or Opus) from the confirmation run
+- [ ] `consultant/agent.py`: one loop from baseline+ with ask / analyse / research / finish actions, budget and stop rules from budgets.yaml
+- [ ] Research action: the research associate + extractor behind one call; facts go to the fact store with URL + quote and come back with ids
+- [ ] Citations: the answer cites fact ids and assumption entries; the Phase 6 validator checks every claim and number
+- [ ] Deliverables: memo, storyline, model .xlsx and sources appendix built from the answer, sandbox results and fact store
+- [ ] Partner review behind a profile flag (off by default): one review, one revision, ship the better-reviewed draft
+- [ ] Real mode: same loop without the interviewer (ask off, research on)
+- [ ] `consult new`, `consult ui` and `consult eval system` run the new agent; old pipeline kept as `--legacy` until the new one beats it, then deleted
+- [ ] Offline tests with recorded responses for the loop, each action and the review flag
+- [ ] Deferred eval: new agent vs C vs baseline on the 18 train cases, partner flag on and off; then the test split once
 
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain

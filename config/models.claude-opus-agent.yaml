@@ -1,0 +1,7 @@
+# Confirmation run, "C with Opus": models.claude.yaml with Opus for the baseline role only
+# (the agent in `consult eval baseline --plus`). Simulator (interviewer, Haiku) and judge
+# (Opus) unchanged. Use with CONSULTANT_MODELS_FILE=models.claude-opus-agent.yaml.
+extends: models.claude.yaml
+
+roles:
+  baseline: {model: claude_cli/opus}
