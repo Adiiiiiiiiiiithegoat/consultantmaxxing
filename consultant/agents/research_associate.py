@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from consultant.llm import LLM
+from consultant.llm import LLM, StructuredOutputError
 from consultant.research.credibility import classify, credibility, domain
 from consultant.research.estimate import Estimate, estimate
 from consultant.research.extract import extract_facts
@@ -91,9 +91,12 @@ def facts_table(facts: list[Fact], question: str = "") -> str:
         return (period_flag(f, question) != "", -f.credibility)
     rows = []
     for f in sorted(facts, key=rank)[:MAX_FACTS_SHOWN]:
+        # the verbatim quote and page title let the reader catch an extractor mislabel
+        # (a quarter labelled as the year, a balance-sheet total labelled as profit)
         row = (f"[F{f.id}] {f.claim} | value={f.value} {f.unit} | "
                f"period={f.period}{period_flag(f, question)} | "
-               f"{f.source_type} {domain(f.source_url)}")
+               f"{f.source_type} {domain(f.source_url)} \"{f.source_title[:70]}\" | "
+               f"quote: \"{' '.join(f.quote.split())[:160]}\"")
         if f.header:
             row += f" | table header: {f.header[:200]}"
         rows.append(row)
@@ -148,55 +151,64 @@ class ResearchAssociate:
         with self.llm.scoped(budget):
             plan = self._ask(PLAN_SYS, f"QUESTION: {question}\n{context}", SearchPlan)
             queue, tried, seen = list(plan.queries[:3]), set(), set()
-            while queue and (budget.remaining("tokens") or 0) > BRIEF_RESERVE:
-                q = queue.pop(0)
-                if q in tried:
-                    continue
-                tried.add(q)
-                try:
-                    results = self.web.search(q, budget=budget)
-                except BudgetExceeded:
-                    break
-                ranked = sorted(results, key=lambda r: -credibility(r.url))  # stable sort
-                read = 0
-                for r in [r for r in ranked if r.url not in seen][:TRIES_PER_QUERY]:
-                    if read >= PAGES_PER_QUERY:
-                        break
-                    seen.add(r.url)
+            try:  # the cap ends the search, never the caller: the brief is still written
+                while queue and (budget.remaining("tokens") or 0) > BRIEF_RESERVE:
+                    q = queue.pop(0)
+                    if q in tried:
+                        continue
+                    tried.add(q)
                     try:
-                        page = self.web.fetch(r.url, budget=budget)
+                        results = self.web.search(q, budget=budget)
                     except BudgetExceeded:
-                        queue.clear()
                         break
-                    if page.error or len(page.text) < 200:
-                        continue  # blocked/failed sources are common; try the next result
-                    if not dated_ok(page.date, self.as_of):
-                        continue  # backtest: source not provably from before the cut-off
-                    read += 1
-                    found, rej = extract_facts(self.llm, page, question, self.extractor_role)
-                    rejected += rej
-                    for pf in found:
-                        fact = Fact(engagement_id=self.engagement_id, source_url=page.url,
-                                    source_title=page.title, source_date=page.date,
-                                    source_type=classify(page.url),
-                                    credibility=credibility(page.url),
-                                    hypothesis_ids=[hypothesis_id] if hypothesis_id else [],
-                                    **pf.model_dump())
-                        fact.id = self.store.add(fact)
-                        facts.append(fact)
-                if (budget.remaining("tokens") or 0) <= BRIEF_RESERVE:
-                    break
-                table = facts_table(facts, question) or "(none yet)"
-                gap = self._ask(GAP_SYS, f"QUESTION: {question}\nQUERIES TRIED: {sorted(tried)}"
-                                         f"\nFACTS:\n{table}", GapCheck)
-                usable = [f for f in facts if f.value is not None and not period_flag(f, question)]
-                if gap.answered and usable:  # never stop on 'answered' with nothing to cite
-                    break
-                if gap.next_query:
-                    queue.append(gap.next_query)
+                    ranked = sorted(results, key=lambda r: -credibility(r.url))  # stable sort
+                    read = 0
+                    for r in [r for r in ranked if r.url not in seen][:TRIES_PER_QUERY]:
+                        if read >= PAGES_PER_QUERY:
+                            break
+                        seen.add(r.url)
+                        try:
+                            page = self.web.fetch(r.url, budget=budget)
+                        except BudgetExceeded:
+                            queue.clear()
+                            break
+                        if page.error or len(page.text) < 200:
+                            continue  # blocked/failed sources are common; try the next result
+                        if not dated_ok(page.date, self.as_of):
+                            continue  # backtest: source not provably from before the cut-off
+                        read += 1
+                        found, rej = extract_facts(self.llm, page, question, self.extractor_role)
+                        rejected += rej
+                        for pf in found:
+                            fact = Fact(engagement_id=self.engagement_id, source_url=page.url,
+                                        source_title=page.title, source_date=page.date,
+                                        source_type=classify(page.url),
+                                        credibility=credibility(page.url),
+                                        hypothesis_ids=[hypothesis_id] if hypothesis_id else [],
+                                        **pf.model_dump())
+                            fact.id = self.store.add(fact)
+                            facts.append(fact)
+                    if (budget.remaining("tokens") or 0) <= 2 * BRIEF_RESERVE:
+                        break  # keep the gap check from eating the brief's reserve
+                    table = facts_table(facts, question) or "(none yet)"
+                    gap = self._ask(GAP_SYS, f"QUESTION: {question}\nQUERIES TRIED: {sorted(tried)}"
+                                             f"\nFACTS:\n{table}", GapCheck)
+                    usable = [f for f in facts
+                              if f.value is not None and not period_flag(f, question)]
+                    if gap.answered and usable:  # never stop on 'answered' with nothing to cite
+                        break
+                    if gap.next_query:
+                        queue.append(gap.next_query)
+            except BudgetExceeded:
+                pass
             prompt = (f"QUESTION: {question}\nFACTS:\n"
                       f"{facts_table(facts, question) or '(none found)'}")
-            brief = self._ask(BRIEF_SYS, prompt, Brief)
+            try:
+                brief = self._ask(BRIEF_SYS, prompt, Brief)
+            except BudgetExceeded:  # out of tokens: the facts still go back, uncited
+                brief = Brief(answer="Research stopped at its budget cap before a brief was "
+                                     "written.", value=None, unit="", period="", fact_ids=[],
+                              confidence="low", gaps="research budget cap")
             if problem := brief_problem(brief, facts, question):
                 try:  # one corrective retry, then fail safe below
                     brief = self._ask(BRIEF_SYS, f"{prompt}\n\nYOUR PREVIOUS ANSWER WAS "
@@ -215,7 +227,7 @@ class ResearchAssociate:
                 try:
                     est = estimate(self.llm, self.store, self.engagement_id, question,
                                    facts_table(facts, question), self.role)
-                except BudgetExceeded:
-                    est = None  # out of budget: the brief already says what's missing
+                except (BudgetExceeded, StructuredOutputError):
+                    est = None  # out of budget or no usable plan: the brief says what's missing
         return ResearchResult(question, brief, facts, triangulate(facts), est,
                               dict(budget.spent), rejected)

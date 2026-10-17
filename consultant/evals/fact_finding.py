@@ -59,6 +59,9 @@ def run(limit: int | None = None, dev: bool = False) -> dict:
                "rejected_facts": res.rejected_facts, "spent": res.spent, "verification": ver,
                "sources": sorted({f.source_url for f in res.facts})}
         path.write_text(json.dumps(row, indent=1, ensure_ascii=False), encoding="utf-8")
+        if q.get("split") == "heldout":  # don't look: held-out detail stays out of the log
+            print(f"{q['id']}: done (held out)", flush=True)
+            continue
         print(f"{q['id']}: {'OK ' if ok else 'BAD'} got={got} want={q['answer']} "
               f"facts={len(res.facts)} verified={ver['verified']}/{ver['verified'] + ver['failed']}"
               f" spent={res.spent}", flush=True)
@@ -68,8 +71,15 @@ def run(limit: int | None = None, dev: bool = False) -> dict:
     total_f = sum(r["verification"]["failed"] for r in rows)
     unsourced = store.db.execute("SELECT COUNT(*) FROM facts WHERE verified = 1 AND "
                                  "(source_url = '' OR quote = '')").fetchone()[0]
+    split = {q["id"]: q.get("split", "dev") for q in qs}
+
+    def acc(which: str | None) -> float | None:
+        rs = [r for r in rows if which is None or split.get(r["id"]) == which]
+        return sum(r["correct"] for r in rs) / len(rs) if rs else None
     summary = {"done": len(rows), "total": len(qs),
-               "accuracy": sum(r["correct"] for r in rows) / len(rows) if rows else None,
+               # headline: questions never inspected while fixing (see fact_questions.yaml)
+               "accuracy_heldout": acc("heldout"), "accuracy_dev": acc("dev"),
+               "accuracy": acc(None),
                "verifier_rate": total_v / (total_v + total_f) if total_v + total_f else None,
                "facts": total_v + total_f, "eligible_without_source": unsourced,
                "caps": CAPS, "usage": tracer.usage()}

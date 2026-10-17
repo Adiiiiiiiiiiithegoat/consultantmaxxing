@@ -25,8 +25,15 @@ def load_yaml(name: str) -> dict:
 
 def models_config() -> dict:
     """config/models.yaml, or the file named by CONSULTANT_MODELS_FILE (e.g. models.small.yaml
-    for smoke runs, or a paid-model file later)."""
-    return load_yaml(os.environ.get("CONSULTANT_MODELS_FILE") or "models.yaml")
+    for smoke runs, or a paid-model file later). A file with `extends: <base file>` is that
+    base with its own sections merged in, entry by entry (e.g. two roles on another model)."""
+    cfg = load_yaml(os.environ.get("CONSULTANT_MODELS_FILE") or "models.yaml")
+    if base := cfg.pop("extends", None):
+        full = load_yaml(base)
+        for section, entries in cfg.items():
+            full.setdefault(section, {}).update(entries)
+        cfg = full
+    return cfg
 
 
 def profile(name: str = "dev") -> dict:

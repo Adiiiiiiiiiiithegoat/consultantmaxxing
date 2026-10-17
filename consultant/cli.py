@@ -1,6 +1,6 @@
 """consult: command-line interface.
 
-  consult new "Why did our margins fall?"      start a real-mode engagement (interactive)
+  consult new "Why did our margins fall?"      start a real-mode engagement (--legacy: old pipeline)
   consult resume <engagement-id>               continue a stopped engagement
   consult list                                 engagements and their status
   consult eval system|baseline|facts|partner|backtests|retrieval|tokens
@@ -50,6 +50,9 @@ def _checkpoint(stage: str, ws) -> str | None:
 
 
 def _run(ws, interactive: bool) -> None:
+    """The single agent, unless the workspace was started with --legacy (the old pipeline,
+    which also has the interactive checkpoints)."""
+    from consultant.agent import Agent
     from consultant.agents.engagement_manager import Engagement
     from consultant.llm import LLM, ModelBlocked, QuotaExhausted
     from consultant.research.web import Web
@@ -57,8 +60,11 @@ def _run(ws, interactive: bool) -> None:
     tracer = Tracer(run_id=f"engagement-{ws.state.engagement_id}")
     llm = LLM(tracer=tracer)
     try:
-        out = Engagement(llm, ws, web=Web(tracer=tracer),
-                         checkpoint=_checkpoint if interactive else None).run()
+        if ws.state.notes.get("engine") == "legacy":
+            out = Engagement(llm, ws, web=Web(tracer=tracer),
+                             checkpoint=_checkpoint if interactive else None).run()
+        else:
+            out = Agent(llm, ws, web=Web(tracer=tracer)).run()
     except QuotaExhausted as e:
         typer.secho(f"\nStopped cleanly: model quota exhausted ({e}). Progress is saved.",
                     fg="yellow")
@@ -84,13 +90,17 @@ def _run(ws, interactive: bool) -> None:
 @app.command()
 def new(problem: str = typer.Argument(..., help="the business problem, in plain words"),
         name: str = typer.Option(None, help="engagement id (default: from the problem)"),
-        profile: str = typer.Option("dev", help="budget profile: dev or full"),
+        profile: str = typer.Option(None, help="budget profile (default agent-real; legacy: "
+                                    "dev or full)"),
         interactive: bool = typer.Option(True, "--interactive/--auto",
-                                         help="ask you at the checkpoints")):
+                                         help="legacy only: ask you at the checkpoints"),
+        legacy: bool = typer.Option(False, help="the old multi-agent pipeline")):
     """Start a real-mode engagement: research the web and deliver a memo, model and sources."""
     from consultant.workspace import Workspace
     eid = name or f"{_slug(problem)}-{datetime.now():%Y%m%d-%H%M}"
-    ws = Workspace.create(eid, mode="real", profile=profile, problem_statement=problem)
+    profile = profile or ("dev" if legacy else "agent-real")
+    ws = Workspace.create(eid, mode="real", profile=profile, problem_statement=problem,
+                          notes={"engine": "legacy" if legacy else "agent"})
     typer.echo(f"Engagement {eid} ({profile} profile)")
     _run(ws, interactive)
 
@@ -124,6 +134,22 @@ def report(system: str = "system-test", baseline: str = "baseline"):
 
 
 @app.command()
+def compare(problem: str = typer.Argument(..., help="markdown file with the client problem"),
+            human_answer: str = typer.Argument(..., help="markdown file with a human answer"),
+            name: str = typer.Option(None, help="output folder under engagements/"),
+            profile: str = typer.Option("claude", help="budget profile for the system run")):
+    """Run the system on a problem, blind both answers as A/B and judge each separately.
+    Set CONSULTANT_MODELS_FILE (e.g. models.claude.yaml) first."""
+    from consultant.evals import compare as cmp
+    name = name or f"compare-{_slug(Path(problem).stem)}-{datetime.now():%Y%m%d-%H%M}"
+    res = cmp.compare(Path(problem), Path(human_answer), name, profile)
+    typer.echo(f"Blinded answers and scores in {res['dir']} (key/mapping.json reveals A/B)")
+    for who in ("system", "human"):
+        typer.echo(f"  {who:6} answer {res[who]['label']}: {res[who]['total']:.2f} "
+                   f"{res[who]['scores']}")
+
+
+@app.command()
 def ui(port: int = 8501):
     """Open the Streamlit dashboard."""
     app_path = Path(__file__).parent / "ui" / "app.py"
@@ -134,18 +160,24 @@ def ui(port: int = 8501):
 # ---- evals ----------------------------------------------------------------------------
 @eval_app.command("system")
 def eval_system(split: str = "train", n: int = typer.Option(None), name: str = None,
-                profile: str = "dev"):
-    """Full system in case mode on a split, scored by the judge."""
+                profile: str = typer.Option(None, help="default: agent (legacy: dev)"),
+                legacy: bool = typer.Option(False, help="the old multi-agent pipeline"),
+                skip: int = typer.Option(0, help="skip the first N cases of the split")):
+    """The system (single agent) in case mode on a split, scored by the judge."""
     from consultant.evals import run_system
-    run_system.main(["cases", "--split", split, "--profile", profile]
+    run_system.main(["cases", "--split", split, "--skip", str(skip)]
+                    + (["--profile", profile] if profile else []) + (["--legacy"] if legacy else [])
                     + (["--n", str(n)] if n else []) + (["--name", name] if name else []))
 
 
 @eval_app.command("baseline")
-def eval_baseline(n: int = typer.Option(None)):
-    """Single-model baseline on the test split."""
+def eval_baseline(n: int = typer.Option(None), split: str = "test", name: str = "baseline",
+                  plus: bool = typer.Option(False, help="baseline+ (ablation C): playbooks "
+                                            "in the prompt and the analysis sandbox")):
+    """Single-model baseline (default: the test split)."""
     from consultant.evals import baseline
-    typer.echo(json.dumps(baseline.run(limit=n), indent=1, default=str))
+    typer.echo(json.dumps(baseline.run(split, limit=n, name=name, plus=plus), indent=1,
+                          default=str))
 
 
 @eval_app.command("facts")

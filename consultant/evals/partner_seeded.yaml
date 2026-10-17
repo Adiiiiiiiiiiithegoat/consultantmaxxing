@@ -2,18 +2,25 @@
 # each seeded with one flaw. Written for this repo (no casebook content).
 question: Why have the bakery chain's profits fallen 20% in two years, and what should it do?
 client_prior: Customers are leaving for newer cafes.
+# Accounts behind the evidence (checked by tests/test_engagement.py: every number in the
+# evidence and drafts must be consistent with these, except the seeded maths flaw).
+accounts:
+  revenue: [30, 30]
+  costs: [20, 22]
+  profit: [10, 8]
+  cost_lines: {ingredients: [6, 7.8], rent: [4, 4.2], wages: [10, 10]}
 evidence: |
-  F1: Profits fell 20% over two years | source=client
-  F2: Revenue flat at Rs 24 crore; cakes flat, bread -5%, coffee +10% | source=client
-  F3: Costs rose from Rs 19 crore to Rs 22 crore; ingredients +30% (butter, flour), rent +3%, wages flat | source=client
+  F1: Profits fell 20% over two years, from Rs 10 crore to Rs 8 crore | source=client
+  F2: Revenue flat at Rs 30 crore; cakes, bread and coffee each within 2% of two years ago | source=client
+  F3: Costs rose from Rs 20 crore to Rs 22 crore; ingredients (butter, flour) Rs 6 crore to Rs 7.8 crore (+30%), rent Rs 4 crore to Rs 4.2 crore (+5%), wages Rs 10 crore flat | source=client
   F4: Prices unchanged for 3 years; competitors raised cake prices 12% last year | source=client
   F5: Butter bought weekly on the spot market from 6 small suppliers; no contracts | source=client
   F6: Footfall steady at 2,000 per outlet per day; ratings 4.5/5 | source=client
-  A1: cost_increase -> {'base_cost_cr': 19, 'current_cost_cr': 22, 'increase_pct': 15.79}
+  A1: cost_increase -> {'base_cost_cr': 20, 'current_cost_cr': 22, 'increase_pct': 10.0}
 clean: |
   ANSWER: Profits fell because ingredient costs (butter, flour) rose ~30% while prices stayed frozen for three years; contract butter supply and raise cake prices toward competitors.
   ARGUMENTS:
-  1. Costs, not revenue, drove the decline: revenue is flat at Rs 24 crore while costs rose from Rs 19 to Rs 22 crore (15.79%) [F2, F3, A1]
+  1. Costs, not revenue, drove the decline: revenue is flat at Rs 30 crore while costs rose from Rs 20 to Rs 22 crore (10%), taking profit from Rs 10 to Rs 8 crore (-20%) [F1, F2, F3, A1]
   2. Spot-market butter buying left the client exposed to input inflation [F3, F5]
   3. Prices lag the market: unchanged for three years while rivals raised cake prices 12% [F4]
   4. Customers are not leaving: footfall is steady and ratings are high [F6]
@@ -24,7 +31,7 @@ flawed:
     draft: |
       ANSWER: Profits fell because ingredient costs rose ~30% and the chain lost 12% market share to new cafes; contract butter and raise prices.
       ARGUMENTS:
-      1. Costs rose from Rs 19 to Rs 22 crore (15.79%) [F3, A1]
+      1. Costs rose from Rs 20 to Rs 22 crore (10%) [F3, A1]
       2. Market share fell 12% to new cafes, cutting volumes [F2]
       3. Prices unchanged for three years while rivals raised theirs 12% [F4]
       RISKS: Price rise may lose buyers.
@@ -33,7 +40,7 @@ flawed:
     draft: |
       ANSWER: Profits fell because costs rose 25% while prices stayed frozen; contract butter and raise cake prices.
       ARGUMENTS:
-      1. Costs rose from Rs 19 crore to Rs 22 crore, a 25% increase [F3]
+      1. Costs rose from Rs 20 crore to Rs 22 crore, a 25% increase [F3]
       2. Spot-market butter buying exposed the client to inflation [F5]
       3. Prices unchanged for three years; rivals raised cake prices 12% [F4]
       RISKS: Price rise may lose buyers.
@@ -42,7 +49,7 @@ flawed:
     draft: |
       ANSWER: Ingredient costs rose ~30% while prices stayed frozen, so the chain should open five new outlets in new cities to grow out of the problem.
       ARGUMENTS:
-      1. Costs rose from Rs 19 to Rs 22 crore (15.79%) [F3, A1]
+      1. Costs rose from Rs 20 to Rs 22 crore (10%) [F3, A1]
       2. Spot-market butter buying exposed the client to inflation [F5]
       3. Prices unchanged for three years [F4]
       RISKS: New outlets need capital.
@@ -51,9 +58,9 @@ flawed:
     draft: |
       ANSWER: Profits fell because ingredient costs rose ~30%; the chain should cut costs by renegotiating rent and contracting butter.
       ARGUMENTS:
-      1. Costs rose from Rs 19 to Rs 22 crore (15.79%) [F3, A1]
+      1. Costs rose from Rs 20 to Rs 22 crore (10%) [F3, A1]
       2. Butter is bought on the spot market with no contracts [F5]
-      3. Rent rose 3% and can be renegotiated [F3]
+      3. Rent rose 5% and can be renegotiated [F3]
       RISKS: Landlords may refuse.
       NEXT STEPS: Renegotiate leases; tender a butter contract.
   - kind: client_pleasing

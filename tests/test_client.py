@@ -196,6 +196,54 @@ def test_groq_json_validate_failed_400_is_retried(make_llm):
     assert "failed validation" in srv.requests[1]["messages"][-1]["content"]
 
 
+def test_json_validate_failed_salvages_or_shows_the_failed_generation(make_llm):
+    # system-train p025: two json_validate_failed 400s in a row, then a reply missing fields
+    def err(gen):
+        return httpx.Response(400, json={"error": {
+            "message": "Failed to validate JSON.", "type": "invalid_request_error",
+            "code": "json_validate_failed", "failed_generation": gen}})
+    srv = Server(err('Sure! {"city": "Pune", "population_m": 7.4} done'))
+    llm, _ = make_llm(srv)
+    assert llm.structured("r", MSG, Answer).city == "Pune"   # salvaged, no second call
+    assert len(srv.requests) == 1
+    srv = Server(err('{"city": "Pune"'), chat('{"city": "Pune", "population_m": 7.4}'))
+    llm, _ = make_llm(srv)
+    assert llm.structured("r", MSG, Answer).population_m == 7.4
+    retry = srv.requests[1]["messages"]
+    assert retry[-2]["content"] == '{"city": "Pune"'          # the model sees what it wrote
+    assert "every required field" in retry[-1]["content"]
+
+
+
+def test_truncated_structured_reply_asks_for_a_shorter_one(make_llm):
+    # system-train run 2: the analyst's code was cut at max_tokens 3 times in a row because
+    # the retry never said the reply was too long
+    cut = chat('{"city": "Pu')
+    cut._content = cut.content.replace(b'"stop"', b'"length"')
+    srv = Server(cut, chat('{"city": "Pune", "population_m": 7.4}'))
+    llm, _ = make_llm(srv)
+    assert llm.structured("r", MSG, Answer).city == "Pune"
+    assert "cut off at the output-token limit" in srv.requests[1]["messages"][-1]["content"]
+
+
+def test_over_long_lists_are_trimmed_not_retried():
+    # system-train p025: Scope had 10 then 8 clarifying questions (max 5) on every retry
+    from pydantic import Field, ValidationError
+
+    from consultant.llm.client import validate_reply
+
+    class Sub(BaseModel):
+        qs: list[str] = Field(max_length=2)
+
+    class Plan(BaseModel):
+        qs: list[str] = Field(max_length=3)
+        subs: list[Sub]
+        n: int
+    p = validate_reply(Plan, '{"qs": ["a","b","c","d"], "subs": [{"qs": ["x","y","z"]}], "n": 1}')
+    assert p.qs == ["a", "b", "c"] and p.subs[0].qs == ["x", "y"]
+    with pytest.raises(ValidationError):  # other errors still go back to the model
+        validate_reply(Plan, '{"qs": ["a","b","c","d"], "subs": [], "n": "many"}')
+
 def test_blocked_model_is_refused_or_falls_back(make_llm, monkeypatch):
     from consultant.llm import ModelBlocked
     monkeypatch.setenv("CONSULTANT_BLOCK_MODELS", "fake/m")

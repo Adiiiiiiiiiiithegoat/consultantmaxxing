@@ -1,0 +1,6 @@
+# The single agent on Sonnet: a cheaper mode than the default Opus agent (models.claude.yaml).
+# Use with CONSULTANT_MODELS_FILE=models.claude-sonnet.yaml.
+extends: models.claude.yaml
+
+roles:
+  agent: {model: claude_cli/sonnet}

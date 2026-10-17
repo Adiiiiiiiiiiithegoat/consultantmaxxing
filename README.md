@@ -48,14 +48,20 @@ Local extractor model (optional, ~2.5GB; falls back to Groq if absent):
 
 ```bash
 uv run consult new "Why did Asian Paints' EBITDA margin change in FY24, and what should it do?"
-uv run consult new "..." --auto --profile dev   # no checkpoints; dev = small budget
+uv run consult new "..." --profile agent-partner   # with a partner review of the draft
+uv run consult new "..." --legacy                   # the old multi-agent pipeline
 uv run consult list                             # engagements and their progress
 uv run consult resume <engagement-id>           # continue after a stop
-uv run consult ui                               # dashboard: live tree, hypotheses, facts
+uv run consult ui                               # dashboard: the agent's work, facts, deliverables
 ```
 
-Interactive mode stops twice: after scoping (answer the clarifying questions or press
-Enter) and after the hypotheses (give feedback or press Enter). Output goes to
+One agent does the work (`consultant/agent.py`): each turn it researches the web (every
+fact stored with its URL and quote), runs an analysis in the sandbox, or finishes. Its
+answer is written up citing those facts, analyses and labelled estimates; a validator checks
+every number and any it can't trace is removed and listed. With Claude
+(`CONSULTANT_MODELS_FILE=models.claude.yaml`) the agent runs on Opus;
+`models.claude-sonnet.yaml` is the cheaper Sonnet mode. The legacy pipeline (`--legacy`)
+also has interactive checkpoints after scoping and after the hypotheses. Output goes to
 `engagements/<id>/deliverables/`. Every step is saved, so a crash, Ctrl-C or exhausted
 quota loses nothing: `consult resume` picks up where it stopped.
 

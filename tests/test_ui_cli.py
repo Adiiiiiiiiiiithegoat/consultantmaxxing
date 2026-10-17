@@ -57,14 +57,18 @@ def test_dashboard_with_no_engagements(engagements):
     assert not at.exception and "Start an engagement" in text_of(at)
 
 
-def test_cli_list_and_graceful_quota_stop(engagements, monkeypatch):
+@pytest.mark.parametrize("engine", [[], ["--legacy"]])
+def test_cli_list_and_graceful_quota_stop(engagements, monkeypatch, engine):
+    from consultant import agent
     from consultant.agents import engagement_manager
     from consultant.llm import QuotaExhausted
 
     def boom(self):
         raise QuotaExhausted("daily quota exhausted; frees up in 40 min")
     monkeypatch.setattr(engagement_manager.Engagement, "run", boom)
-    r = CliRunner().invoke(app, ["new", "Why did profits fall?", "--auto", "--name", "q1"])
+    monkeypatch.setattr(agent.Agent, "run", boom)
+    r = CliRunner().invoke(app, ["new", "Why did profits fall?", "--auto", "--name", "q1",
+                                 *engine])
     assert r.exit_code == 2 and "Stopped cleanly" in r.output and "consult resume q1" in r.output
     r = CliRunner().invoke(app, ["list"])
     assert r.exit_code == 0 and "q1" in r.output

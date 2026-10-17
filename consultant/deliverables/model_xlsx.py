@@ -28,6 +28,8 @@ def _flatten(d, prefix="") -> dict[str, float]:
             out[key] = float(v)
         elif isinstance(v, dict):
             out |= _flatten(v, key + ".")
+        elif isinstance(v, list | tuple):  # e.g. a path of values: each one is citable
+            out |= _flatten({f"[{i}]": x for i, x in enumerate(v)}, key)
     return out
 
 

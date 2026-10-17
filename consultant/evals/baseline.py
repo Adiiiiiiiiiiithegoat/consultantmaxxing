@@ -1,27 +1,35 @@
 """Baseline: one model, one plain consultant prompt, no tools or playbooks, through the same
 simulator and judge. Resumable per case.
 
+Ablation C ("baseline+", `plus=True`): the same agent with every playbook in skills/ in its
+system prompt and the analysis sandbox as a third action. No orchestration, research or partner.
+
 Usage: uv run python -m consultant.evals.baseline [n_cases]
 """
 
 import json
 import subprocess
 import sys
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel
 
+from consultant.agents.analyst import TEMPLATES_DOC
+from consultant.analysis import sandbox
 from consultant.config import ROOT
 from consultant.evals.judge import RUBRIC, Submission, judge
 from consultant.evals.simulator import Interviewer
+from consultant.knowledge import playbooks
 from consultant.knowledge.extract import load_cases
 from consultant.knowledge.schema import Case
 from consultant.llm import LLM, QuotaExhausted
 from consultant.llm.context import clip
-from consultant.tracing import Tracer
+from consultant.tracing import Budget, Tracer
 
 RESULTS = ROOT / "eval_results"
 MAX_QUESTIONS = 8
+MAX_ANALYSES = 4  # baseline+: sandbox runs per case, on top of the questions
 
 BASELINE_SYS = (
     "You are a management consultant solving a case interview. Each turn is one of two "
@@ -30,6 +38,19 @@ BASELINE_SYS = (
     "and continue. 'final_answer': END the case with your answer to the original problem: "
     "the recommendation first, then the supporting analysis and next steps. You have a "
     "limited number of questions.")
+
+PLUS_SYS = (
+    "You are a management consultant solving a case interview. Each turn is one of three "
+    "actions. 'ask': say something to the interviewer, i.e. one question to clarify the "
+    "problem or request data; if the interviewer asked you something, reply briefly here "
+    "and continue. 'analyse': content is a short Python script that assigns a dict of named "
+    "results to RESULT; it runs in a sandbox (standard library and the templates below, no "
+    "network or files) and you see RESULT next turn; the interviewer never sees it. Do every "
+    "calculation this way, never in your head. 'final_answer': END the case with your answer "
+    "to the original problem: the recommendation first, then the supporting analysis and "
+    "next steps. You have a limited number of questions and analyses.\n\n"
+    + TEMPLATES_DOC + "\n\nPLAYBOOKS (the firm's methods):\n\n"
+    + "\n\n".join(playbooks.load(f.stem) for f in sorted(playbooks.SKILLS.glob("*.md"))))
 
 
 def code_version() -> str:
@@ -46,7 +67,22 @@ class Turn(BaseModel):
     content: str
 
 
-def run_case(llm: LLM, case: Case, role: str = "baseline") -> Submission:
+class PlusTurn(BaseModel):
+    action: Literal["ask", "analyse", "final_answer"]
+    content: str
+
+
+def run_case(llm: LLM, case: Case, role: str = "baseline", sandbox_dir: Path | None = None
+             ) -> Submission:
+    """`sandbox_dir` set = baseline+ (ablation C): playbooks + the analysis sandbox."""
+    with llm.scoped(spent := Budget()):  # no caps: counts tokens for the efficiency report
+        sub = (_run_plus(llm, case, role, sandbox_dir) if sandbox_dir else
+               _run_case(llm, case, role))
+    sub.tokens = spent.spent["tokens"]
+    return sub
+
+
+def _run_case(llm: LLM, case: Case, role: str) -> Submission:
     iv = Interviewer(case, llm)
     transcript = [{"role": "interviewer", "content": iv.opening()}]
     final = ""
@@ -67,7 +103,44 @@ def run_case(llm: LLM, case: Case, role: str = "baseline") -> Submission:
                       questions_asked=len(iv.log))
 
 
-def run(split: str = "test", limit: int | None = None, name: str = "baseline") -> dict:
+def _run_plus(llm: LLM, case: Case, role: str, workdir: Path) -> Submission:
+    """Baseline+ loop. Sandbox runs are shown to the candidate only: the judge's transcript
+    holds the interview (efficiency is measured on it) and the runs go in the work record."""
+    iv = Interviewer(case, llm)
+    seen = [{"role": "interviewer", "content": iv.opening()}]  # what the candidate sees
+    runs: list[str] = []
+    final = ""
+    for _ in range(MAX_QUESTIONS + MAX_ANALYSES + 1):
+        left, runs_left = MAX_QUESTIONS - len(iv.log), MAX_ANALYSES - len(runs)
+        convo = "\n".join(f"{t['role'].upper()}: {t['content']}" for t in seen)
+        note = (f"Questions left: {left}. Analyses left: {runs_left}."
+                + ("" if left or runs_left else
+                   " Give your final answer now (action=final_answer)."))
+        msgs = [{"role": "system", "content": PLUS_SYS},
+                {"role": "user", "content": f"{clip(convo, 6000)}\n\n{note}"}]
+        turn = llm.structured(role, msgs, PlusTurn)
+        if (turn.action == "final_answer" or (turn.action == "ask" and not left)
+                or (turn.action == "analyse" and not runs_left)):
+            final = turn.content  # an action it has no budget for ends the case, as above
+            break
+        if turn.action == "ask":
+            seen += [{"role": "candidate", "content": turn.content},
+                     {"role": "interviewer", "content": iv.ask(turn.content)}]
+            continue
+        r = sandbox.run(turn.content, workdir, f"analysis_{len(runs) + 1}")
+        out = (json.dumps(r.result, default=str)[:2000] if r.ok and r.result else
+               f"FAILED: {r.error or 'the script did not set RESULT'}")
+        runs.append(f"A{len(runs) + 1}:\n{turn.content}\n-> {out}")
+        seen += [{"role": "analysis", "content": turn.content},
+                 {"role": "result", "content": out}]
+    transcript = [t for t in seen if t["role"] in ("interviewer", "candidate")]
+    return Submission(transcript=transcript, final_answer=final, questions_asked=len(iv.log),
+                      work=("ANALYSES (sandbox runs):\n" + "\n\n".join(runs)) if runs else "")
+
+
+def run(split: str = "test", limit: int | None = None, name: str = "baseline",
+        plus: bool = False) -> dict:
+    """`plus`: baseline+ (ablation C); sandbox runs go to engagements/<name>/<case id>/."""
     out_dir = RESULTS / name
     out_dir.mkdir(parents=True, exist_ok=True)
     llm = LLM(tracer=Tracer(run_id=f"eval-{name}"))
@@ -77,7 +150,8 @@ def run(split: str = "test", limit: int | None = None, name: str = "baseline") -
         if path.exists():
             continue
         try:
-            sub = run_case(llm, case)
+            sub = run_case(llm, case, sandbox_dir=ROOT / "engagements" / name / case.id
+                           if plus else None)
             verdict = judge(llm, case, sub)
         except QuotaExhausted as e:
             print(f"quota exhausted at {case.id}: {e}; rerun later to resume", flush=True)

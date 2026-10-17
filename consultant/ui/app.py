@@ -42,7 +42,7 @@ def sidebar() -> str | None:
     st.sidebar.title("consultantmaxxing")
     with st.sidebar.form("new"):
         problem = st.text_area("New engagement: the business problem")
-        prof = st.selectbox("Budget profile", ["dev", "full"])
+        prof = st.selectbox("Budget profile", ["agent-real"])
         if st.form_submit_button("Start") and problem.strip():
             log = ENGAGEMENTS / "ui-launch.log"
             log.parent.mkdir(parents=True, exist_ok=True)
@@ -72,16 +72,22 @@ def show(eid: str) -> None:
     c4.metric("Facts", len(facts), f"{sum(bool(f.verified) for f in facts)} verified")
     st.progress(min(1.0, u["tokens"] / prof["max_tokens"]))
 
-    left, right = st.columns(2)
-    with left:
-        st.subheader("Issue tree")
-        st.markdown(tree_md(s.issue_tree) if s.issue_tree else "_not built yet_")
-    with right:
-        st.subheader("Hypotheses")
-        for h in sorted(s.hypotheses, key=lambda h: h.priority):
-            st.markdown(f"{STATUS_ICON[h.status]} **{h.id}** (p{h.priority}) {h.statement}  \n"
-                        f"<small>{h.status} · evidence {h.evidence_fact_ids} "
-                        f"{h.analysis_ids}</small>", unsafe_allow_html=True)
+    if log := s.notes.get("agent_log"):  # the single agent: its turns, newest last
+        st.subheader("Agent's work")
+        for e in log[1:]:
+            ids = f" [{', '.join(e['ids'])}]" if e["ids"] else ""
+            st.markdown(f"**{e['role']}{ids}**: {e['content'][:600]}")
+    else:  # the legacy pipeline: issue tree and hypotheses
+        left, right = st.columns(2)
+        with left:
+            st.subheader("Issue tree")
+            st.markdown(tree_md(s.issue_tree) if s.issue_tree else "_not built yet_")
+        with right:
+            st.subheader("Hypotheses")
+            for h in sorted(s.hypotheses, key=lambda h: h.priority):
+                st.markdown(f"{STATUS_ICON[h.status]} **{h.id}** (p{h.priority}) {h.statement}"
+                            f"  \n<small>{h.status} · evidence {h.evidence_fact_ids} "
+                            f"{h.analysis_ids}</small>", unsafe_allow_html=True)
 
     st.subheader("Facts (newest first)")
     st.dataframe([{"id": f"F{f.id}", "claim": f.claim[:140], "value": f.value, "unit": f.unit,

@@ -261,6 +261,66 @@ iterations), re-running the eval each time, before escalating to the user.
 **Gate:** fresh clone → setup → `consult new` completes a dev-profile engagement
 following only the README; UI renders a live run; full test suite green.
 
+### Live gate runs on the free tier (overnight 2026-10-14, branch overnight-fixes)
+- [x] Resume smoke-asianpaints-2 through to complete deliverables
+- [x] `consult eval system --split train --n 3`: 3/3 within budget, all artefacts
+- [x] `consult eval facts`: accuracy 75%, verifier 0.99, unsourced 0
+- [x] `consult eval partner`: 5/5 seeded flaws caught
+- [x] Partner fixture made arithmetically consistent, with a consistency test
+- [x] Targeted repair pass: no flagged number ships as fact (fix, else `[unverified figure]`)
+- [x] Judge: process dimensions on transcript + workspace, outcome dimensions on the answer only
+- [x] Baseline on the same 3 train cases, same model; system vs baseline per dimension
+- [x] Fact-finding gate split 10 dev / 10 held out; held-out accuracy is the headline
+- [x] Storyliner always commits: recommendation, confidence + reason, 2-3 key evidence, what would change it, next steps
+- [x] Partner findings split into blocking vs comments; approve with comments
+- [x] Validator checks the cited fact's period matches the claim's period
+- [x] Efficiency measured from the transcript (unanswered / no-new-info vs reference)
+- [x] Propose 10 fresh fact questions with sources (`fact_questions_fresh.yaml`)
+- [x] User spot-checks the 10 fresh fact questions (all 10 verified)
+- [x] Simulator calibrated on the casebook's real interviews (fishing filter, new prompt, model + lexical pick)
+- [x] Claude via the Pro subscription: claude_cli provider, models.claude.yaml, claude budget profile
+- [x] `consult compare <problem.md> <human_answer.md>`: blinded A/B, judged separately
+- [x] Live: smoke call per model; one case-mode engagement measured (5m45s, ~140K tokens, ~4% of a 5-hour window)
+- [x] Re-run on Claude: 6 train cases (original 3 + p031/p033/p039), system and baseline, partner eval (command in DEFERRED_EVALS.md)
+- [x] Diagnose the 6-case result: context loss, format bias, over-asking; partner fixture cost lines
+- [x] Judge fix: whole answer to the outcome call, final answer to the process call; re-judge stored runs
+- [x] Full client replies to every agent (no truncation, merged duplicates, problem statement in the brief)
+- [x] Case interview as a conversation: answer prompts, client questions only, no repeats, stop after 2 stale replies
+- [x] Review loop keeps the previous draft's answer; ship the best-reviewed draft
+- [x] One reconciled decision model before synthesis; older analyses superseded
+- [x] Calibrated confidence, rounded numbers, one open-questions list, no ids in client text
+- [x] History rewrite for a copyright leak; originality pre-commit hook (8-word runs, data/ and PDF paths)
+- [x] Re-run on Claude: system on 12 train cases, baseline on the new 6; report studied vs untouched (system 3.06 vs baseline 3.34)
+- [x] Ablation variants behind config flags (branch `ablations`): A Opus brain, B single-brain synthesis, C baseline+
+- [x] Side-by-side report: `report --compare` (studied 6 / untouched 6 / all 12)
+- [x] Run A, B and C on the same 12 train cases and compare with system-v2 and baseline (C 3.51, baseline 3.34, A 3.23, B 2.98)
+- [x] Confirm C on 6 new train cases: C 3.28, baseline 3.15, C with Opus 3.52; pooled 18 C 3.43 vs baseline 3.28
+- [ ] Wire the 10 verified fresh fact questions in as the held-out fact-finding set
+
+## 5b. Rebuild around the single agent (C)
+Start only if the confirmation holds. One tool-using agent replaces the multi-agent
+pipeline: C's loop (playbooks in the prompt, sandbox) plus research, citations and
+deliverables. The eval harness (simulator, judge, report, baseline, leakage and
+originality tests) stays as it is; `consult eval system` runs the new agent.
+- [x] Agent model: Opus (C with Opus 3.52 vs 3.28 on Sonnet); Sonnet via `models.claude-sonnet.yaml`
+- [x] `consultant/agent.py`: C's loop with ask (case mode) / analyse / research / finish; caps from budget profile `agent`
+- [x] Research action: the research associate behind one call; facts stored with URL + quote, ids back to the agent
+- [x] Analyse action: sandbox run becomes A#; estimates the script uses become assumptions S#
+- [x] Write-up: the same agent turns its final answer into a draft citing F#/A#/S#; validator + repair pass unchanged
+- [x] Deliverables: memo, storyline, model .xlsx, sources appendix, assumptions page from the agent's work
+- [x] Partner review behind profile `agent-partner` (off by default): one review, one revision, better draft ships
+- [x] Real mode: same loop without the interviewer (`agent-real` profile, ask off)
+- [x] `consult new`, `consult ui` and `consult eval system` run the agent; old pipeline kept as `--legacy`
+- [x] Offline tests: loop and each action, citations, repair, deliverables, partner flag, real mode, caps, kill-and-resume
+- [ ] Gate: C with Opus on the first 12 train cases, then the agent on 18; agent must not fall below C with Opus
+- [x] Gate 1 run 1 failed (3.41 vs 3.53); diagnosed: research cap ended 8 runs, estimates, lists, structure
+- [x] Fix: research cap no longer ends the engagement; per-question cap 30K
+- [x] Fix: no model-guessed estimates in case mode; list outputs citable; structure up front; search retry
+- [ ] Gate 1 rerun: `agent-train18-v2` on the 18 train cases
+- [ ] Gate: 2 real-mode smoke runs on public-company questions; complete deliverables, validation passed
+- [ ] Gate: partner on vs off on the 6 new train cases; decide whether the flag stays
+- [ ] Delete the legacy pipeline once the agent beats it; then the test split once
+
 ## 6. Later (not in this build)
 - Switch roles to Claude via config and re-run evals to measure the gain
 - Use the consultant as a simulated expert persona for product testing

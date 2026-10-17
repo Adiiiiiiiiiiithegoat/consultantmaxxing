@@ -18,6 +18,7 @@ from consultant.tracing import Budget, Tracer
 USER_AGENT = "consultantmaxxing-research/0.1 (+https://github.com/; polite research bot)"
 CACHE = ROOT / ".llm_cache"
 HOST_DELAY = 2.0  # seconds between requests to the same host
+SEARCH_RETRY_WAIT = 5.0  # seconds before retrying a failed search once
 MAX_BYTES = 30_000_000  # annual-report PDFs are large
 
 
@@ -89,11 +90,15 @@ class Web:
             self._trace("search", query=query, cached=True, n=len(hit["results"]))
             return [SearchResult(**r) for r in hit["results"]]
         self._charge("searches", budget)
-        try:
-            results = self.provider.search(query, max_results)
-        except Exception as e:  # ddgs raises its own rate-limit/timeout errors; don't cache
-            self._trace("search", query=query, cached=False, error=repr(e)[:300])
-            return []
+        for attempt in (1, 2):  # one retry: timeouts come in bursts (14 of 26 in one eval)
+            try:
+                results = self.provider.search(query, max_results)
+                break
+            except Exception as e:  # ddgs raises its own rate-limit/timeout errors; don't cache
+                self._trace("search", query=query, cached=False, error=repr(e)[:300])
+                if attempt == 2:
+                    return []
+                self.sleep(SEARCH_RETRY_WAIT)
         self.search_cache.set(key, {"query": query, "results": [vars(r) for r in results]})
         self._trace("search", query=query, cached=False, n=len(results))
         return results

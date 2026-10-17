@@ -97,6 +97,11 @@ class ScriptedLLM:
                 "slides": [{"action_title": "Butter costs, not customers, cut profit",
                             "points": ["costs up"], "refs": ["F3"]}]}
 
+    def StoryDraft(self, user):  # what the storyliner asks for: Draft + answer-first fields
+        return {"confidence_reason": "two client facts and one analysis agree",
+                "key_evidence": ["F3", "A1"], "would_change": ["butter prices fall back"],
+                **self.Draft(user)}
+
     def Review(self, user):
         self.reviews += 1
         major = self.reviews == 1
@@ -118,8 +123,8 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     eng, ws, iv = engagement(tmp_path, llm)
     out = eng.run()
     st = ws.state
-    assert st.steps_done == ["scope", "plan", "iter0", "story0", "review0", "story1",
-                             "review1", "deliver"]
+    assert st.steps_done == ["scope", "plan", "iter0", "model", "story0", "review0", "story1",
+                             "review1", "repair", "deliver"]
     assert st.problem_statement == BAKERY.problem_statement and st.case_type == "profitability"
     # clarifying + hypothesis questions went to the client; answers stored as sourced facts
     assert len(iv.log) >= 4
@@ -136,6 +141,18 @@ def test_case_mode_engagement_end_to_end(tmp_path):
     memo = (ws.dir / "deliverables/memo.md").read_text(encoding="utf-8")
     assert "## Answer" in memo and "Unhedged butter costs" in memo and "## Risks" in memo
 
+
+
+def test_failed_analysis_does_not_crash_the_engagement(tmp_path):
+    from consultant.llm import StructuredOutputError
+
+    class BadAnalyst(ScriptedLLM):
+        def AnalysisCode(self, user):
+            raise StructuredOutputError("analyst: no valid AnalysisCode after 3 tries")
+    eng, ws, _ = engagement(tmp_path, BadAnalyst())
+    eng.run()
+    assert "deliver" in ws.state.steps_done and not ws.state.analyses
+    assert any("analysis failed" in d.decision for d in ws.state.decisions)
 
 def test_resume_after_completion_makes_no_llm_calls(tmp_path):
     eng, ws, _ = engagement(tmp_path, ScriptedLLM())
@@ -267,26 +284,81 @@ def test_partner_eval_scoring_is_strict(tmp_path):
     import consultant.evals.partner_eval as pe
     pe.ROOT = tmp_path
     out = partner_eval.run(FakePartner())
-    assert out["caught"] == 4 and out["pass"] and out["clean_verdict"] == "approve"
+    # 4/5 is a fail since the gate needs every planted flaw caught as blocking
+    assert out["caught"] == 4 and not out["pass"] and out["clean_verdict"] == "approve"
     assert [r["kind"] for r in out["rows"] if not r["caught"]] == ["maths"]
+
+
+def test_partner_approves_clean_with_comments_and_blocks_every_planted_flaw(tmp_path,
+                                                                             monkeypatch):
+    # The clean fixture used to be rejected on framing points labelled major ("conflates the
+    # cost rise with the profit impact", product mix). Comments must not block; each planted
+    # flaw must block even if the model itself says approve.
+    from consultant.agents import partner
+    from consultant.evals import partner_eval as pe
+    CUES = [("unsupported_claim", "market share fell"), ("maths", "25% increase"),
+            ("non_sequitur", "open five new outlets"), ("missing_branch", "renegotiate leases"),
+            ("client_pleasing", "as the client suspected")]
+    comments = [{"kind": "framing", "severity": "major", "where": "Argument 1",
+                 "detail": "conflates the cost increase with the profit impact"},
+                {"kind": "emphasis", "severity": "major", "where": "Analysis",
+                 "detail": "product mix deserves a mention"},
+                {"kind": "unsupported_claim", "severity": "minor", "where": "Argument 2",
+                 "detail": "spot-buying exposure is an inference"},
+                {"kind": "wording", "severity": "minor", "where": "Answer", "detail": "tighten"}]
+
+    class Partner:
+        def structured(self, role, msgs, schema):
+            draft = msgs[-1]["content"].split("DRAFT:")[1].split("EVIDENCE")[0].lower()
+            kind = next((k for k, cue in CUES if cue in draft), None)
+            issues = comments + ([{"kind": kind, "severity": "major", "where": "x",
+                                   "detail": "planted"}] if kind else [])
+            return schema(issues=issues, strongest_counterargument="c", ceo_questions=[],
+                          agrees_with_client_prior=False, prior_agreement_justified=True,
+                          verdict="approve" if kind else "revise")  # the model's own verdict
+    monkeypatch.setattr(pe, "ROOT", tmp_path)
+    out = pe.run(Partner())
+    assert out["caught"] == 5 and out["clean_verdict"] == "approve" and out["pass"]
+    assert len(out["clean_comments"]) == 4
+    assert all(r["verdict"] == "revise" for r in out["rows"])
+    r = partner.Review(issues=comments, strongest_counterargument="", ceo_questions=[],
+                       agrees_with_client_prior=False, prior_agreement_justified=True,
+                       verdict="approve")
+    text = partner.format_review(r)
+    assert "BLOCKING ISSUES (fix these):\n- none" in text and "conflates" in text
 
 
 def test_run_case_produces_judged_result(tmp_path):
     from consultant.evals import run_system
-    from consultant.evals.judge import RUBRIC
+    from consultant.evals.judge import MEASURED, OUTCOME, PROCESS, RUBRIC
 
     class Judged(ScriptedLLM):
-        def Verdict(self, user):
-            assert "CANDIDATE TRANSCRIPT" in user and "Unhedged butter" in user
-            return {k: {"justification": "ok", "score": 3} for k in RUBRIC}
+        # process dims see the transcript + workspace + the answer (maths done in the answer
+        # counts, for the baseline as for the system); outcome dims see the answer only
+        def ProcessVerdict(self, user):
+            assert "CANDIDATE TRANSCRIPT" in user and "ISSUE TREE" in user
+            assert "HYPOTHESES" in user and "ANALYSES" in user and "FACTS" in user
+            assert "CANDIDATE FINAL ANSWER" in user and "Unhedged butter" in user
+            return {k: {"justification": "ok", "score": 3} for k in PROCESS}
+
+        def OutcomeVerdict(self, user):
+            assert "Unhedged butter" in user and "CANDIDATE TRANSCRIPT" not in user
+            assert "ISSUE TREE" not in user
+            answer = user.split("CANDIDATE FINAL ANSWER")[1]  # what the client reads
+            assert "**Recommendation:**" in answer and not re.search(r"\b[FAS]\d+\b", answer)
+            return {k: {"justification": "ok", "score": 3} for k in OUTCOME}
+    groups = [set(PROCESS), set(OUTCOME), set(MEASURED)]
+    assert set().union(*groups) == set(RUBRIC) and sum(map(len, groups)) == len(RUBRIC)
     import consultant.agents.engagement_manager as em
     orig = em.Retriever.load
     em.Retriever.load = classmethod(lambda cls, *a, **k: cls([]))
     try:
-        row = run_system.run_case(Judged(), BAKERY, tmp_path, "dev")
+        row = run_system.run_case(Judged(), BAKERY, tmp_path, "dev", legacy=True)
     finally:
         em.Retriever.load = orig
-    assert row["overall"] == 3 and row["case_id"] == BAKERY.id and not row["stopped"]
+    assert all(row["scores"][k] == 3 for k in PROCESS + OUTCOME)   # LLM-judged dims
+    assert "questions (reference interview" in row["verdict"]["efficiency"]["justification"]
+    assert row["case_id"] == BAKERY.id and not row["stopped"]
     assert row["code_version"]
     ws = Workspace.load(f"case-{BAKERY.id}", root=tmp_path)
     assert ws.state.notes["interview_log"]      # persisted for resume
@@ -320,7 +392,7 @@ def test_estimates_alone_cannot_settle_a_hypothesis(tmp_path):
 def test_synthesis_budget_stop_delivers_latest_draft_with_unresolved_points(tmp_path):
     class TightSynthesis(ScriptedLLM):
         def structured(self, role, msgs, schema):
-            if schema.__name__ == "Draft" and self.reviews >= 1:
+            if schema.__name__ in ("Draft", "StoryDraft") and self.reviews >= 1:
                 raise BudgetExceeded("tokens budget: scripted synthesis cap")
             return super().structured(role, msgs, schema)
     eng, ws, _ = engagement(tmp_path, TightSynthesis(), eid="tight")
@@ -330,6 +402,20 @@ def test_synthesis_budget_stop_delivers_latest_draft_with_unresolved_points(tmp_
     assert "Unresolved review points" in memo and "no number" in memo
     assert any("Synthesis stopped" in q for q in ws.state.open_questions)
 
+
+
+def test_synthesis_gets_the_reserve_plus_unspent_investigation_tokens(tmp_path):
+    # system-train: investigation used 23-34K of its 42K share while synthesis stopped at its
+    # fixed 18K, though the runs were far under the 60K run cap
+    cap = 60000
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM(), eid="lend")
+    eng.investigate.charge("tokens", 25000)
+    eng.run()
+    assert eng.synthesis.limits["tokens"] == cap - 25000      # total still capped at 60K
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM(), eid="reserve")
+    eng.investigate.charge("tokens", 50000)
+    eng.run()
+    assert eng.synthesis.limits["tokens"] == cap - int(cap * 0.7)  # reserve always kept
 
 def test_research_questions_get_engagement_context(tmp_path, monkeypatch):
     import consultant.agents.engagement_manager as em
@@ -352,3 +438,217 @@ def test_research_questions_get_engagement_context(tmp_path, monkeypatch):
     e = Engagement(ScriptedLLM(), ws, web=object(), retriever=Retriever([]))
     e._research(["What was the EBITDA margin in FY2023-24?"])
     assert seen and "Acme Ltd" in seen[0] and "Paints" in seen[0]
+
+
+def test_partner_fixture_numbers_are_internally_consistent():
+    # The clean draft used to say profits fell 20% while its own evidence implied -60%
+    # (revenue 24, costs 19 -> 22); the partner rightly rejected it.
+    import re
+
+    import yaml
+
+    from consultant.evals.partner_eval import SEEDED
+    s = yaml.safe_load(SEEDED.read_text(encoding="utf-8"))
+    acc = s["accounts"]
+    for y in (0, 1):
+        assert acc["revenue"][y] - acc["costs"][y] == acc["profit"][y]
+        assert abs(sum(v[y] for v in acc["cost_lines"].values()) - acc["costs"][y]) < 1e-9
+    pairs = {tuple(acc[k]) for k in ("revenue", "costs", "profit")}
+
+    def pct(a, b):
+        return (b - a) / a * 100
+    # every cost line states both years (so the lines visibly sum to both totals; listing
+    # only base-year values beside the current total read as 6 + 4 + 10 = 20, not 22) and
+    # its "% change" matches the accounts
+    for line, (a, b) in acc["cost_lines"].items():
+        stated = re.search(rf"{line}[^;|]*?Rs {a:g} crore to Rs {b:g} crore \(([+-]?\d+)%\)"
+                           rf"|{line}[^;|]*?Rs {a:g} crore flat", s["evidence"])
+        assert stated, line
+        assert stated.group(1) is not None or a == b, line
+        assert stated.group(1) is None or abs(float(stated.group(1)) - pct(a, b)) < 0.5, line
+    assert re.search(rf"Profits fell {-pct(*acc['profit']):g}%", s["evidence"])
+    a1 = re.search(r"'base_cost_cr': (\S+), 'current_cost_cr': (\S+), 'increase_pct': (\S+)}",
+                   s["evidence"])
+    assert (float(a1[1]), float(a1[2])) == tuple(acc["costs"])
+    assert abs(float(a1[3]) - pct(*acc["costs"])) < 0.01
+    # every "from Rs A to Rs B" names a real pair; a % stated with it must be right,
+    # except in the draft seeded with the maths flaw, where it must be wrong
+    move = re.compile(r"from Rs (\d+(?:\.\d+)?)(?: crore)? to Rs (\d+(?:\.\d+)?) crore"
+                      r"(?:[ ,]*\(|, an? )?(-?\d+(?:\.\d+)?)?%?")
+    texts = [("evidence", s["evidence"]), ("clean", s["clean"])] + \
+        [(f["kind"], f["draft"]) for f in s["flawed"]]
+    for name, text in texts:
+        for m in move.finditer(text):
+            a, b = float(m[1]), float(m[2])
+            assert (a, b) in pairs, (name, m[0])
+            if m[3] is not None:
+                right = abs(abs(float(m[3])) - abs(pct(a, b))) < 0.5
+                assert right == (name != "maths"), (name, m[0])
+    maths = next(f["draft"] for f in s["flawed"] if f["kind"] == "maths")
+    assert any(m[3] for m in move.finditer(maths))  # the seeded flaw is actually present
+
+
+def test_rejudge_rescores_a_finished_engagement_without_rerunning_it(tmp_path, monkeypatch):
+    import json
+
+    from consultant.evals import run_system
+    from consultant.evals.judge import OUTCOME, PROCESS
+
+    class Judge(ScriptedLLM):
+        def __init__(self, score):
+            super().__init__()
+            self.score = score
+
+        def ProcessVerdict(self, user):
+            assert "ISSUE TREE" in user
+            return {k: {"justification": "j", "score": self.score} for k in PROCESS}
+
+        def OutcomeVerdict(self, user):
+            return {k: {"justification": "j", "score": self.score} for k in OUTCOME}
+    import consultant.agents.engagement_manager as em
+    monkeypatch.setattr(em.Retriever, "load", classmethod(lambda cls, *a, **k: cls([])))
+    monkeypatch.setattr(run_system, "RESULTS", tmp_path / "results")
+    monkeypatch.setattr(run_system, "ROOT", tmp_path)
+    monkeypatch.setattr(run_system, "load_cases", lambda split: [BAKERY])
+    row = run_system.run_case(Judge(2), BAKERY, tmp_path / "engagements" / "sys", "dev",
+                              legacy=True)
+    (tmp_path / "results" / "sys").mkdir(parents=True)
+    (tmp_path / "results" / "sys" / f"{BAKERY.id}.json").write_text(json.dumps(row))
+    llm = Judge(4)
+    monkeypatch.setattr(run_system, "LLM", lambda **k: llm)
+    [new] = run_system.rejudge("sys")
+    judged = PROCESS + OUTCOME
+    assert all(new["scores"][k] == 4 for k in judged) and all(row["scores"][k] == 2
+                                                              for k in judged)
+    assert new["scores"]["efficiency"] == row["scores"]["efficiency"]  # measured: unchanged
+    assert set(llm.calls) == {"ProcessVerdict", "OutcomeVerdict"}   # judge calls only
+    assert (tmp_path / "results" / "sys-rejudged" / f"{BAKERY.id}.json").exists()
+
+
+LONG_REPLY = ("The owners run several unrelated businesses and have never made baked goods "
+              "themselves, so every recipe is licensed from a family supplier. They are not "
+              "short of money for this turnaround. What they care about most is keeping the "
+              "brand local and never closing an outlet, even an unprofitable one, because the "
+              "founder promised staff in every neighbourhood a job for life.")
+
+
+def test_client_reply_reaches_the_brief_in_full_and_once(tmp_path):
+    # regression: replies were stored as "Client, asked '<question>': <reply>" and every agent
+    # saw the first 220 chars, i.e. ~82 chars of the reply; a reply with no digits got no
+    # extracted facts, so the rest never reached the storyliner, partner or assessor
+    from consultant.agents.engagement_manager import evidence_text
+    case = BAKERY.model_copy(update={"clarifying_qa": [
+        BAKERY.clarifying_qa[0].model_copy(update={"question": "owners background budget",
+                                                   "answer": LONG_REPLY})]})
+    llm = ScriptedLLM()
+    ws = Workspace.open("e1", root=tmp_path, mode="case", profile="dev")
+    eng = Engagement(llm, ws, interviewer=Interviewer(case, llm), retriever=Retriever([]))
+    ws.state.problem_statement = case.problem_statement
+    ws.state.scope = llm.Scope("") | {"restated_question": "What should the bakery do?"}
+    assert len(LONG_REPLY) > 300 and not any(c.isdigit() for c in LONG_REPLY)
+    eng.iv.ask = lambda q: LONG_REPLY
+    eng._ask_client(["What is the owners' background and budget?",
+                     "Do the owners have money for this?"])           # same reply twice
+    client = [f for f in ws.facts.facts("e1") if f.source_type == "client"]
+    assert [f.claim for f in client] == [LONG_REPLY]                   # stored whole, once
+    for text in (evidence_text(ws, verified_only=True), eng._brief()):
+        assert LONG_REPLY in text and "job for life" in text
+    assert case.problem_statement in eng._brief()       # the problem as the client put it
+
+
+def test_p033_ships_the_best_reviewed_draft_and_revisions_see_the_previous_one(tmp_path):
+    # regression (p033, contents synthetic): drafts 0 and 1 recommended option A; the partner's
+    # counterarguments flipped draft 2 to option B, whose review found a critical flaw, and
+    # with no rounds left the flipped last draft shipped. Now the reviewed draft with the
+    # fewest blocking issues ships, and each revision is written from the previous draft.
+    def issue(sev="major"):
+        return {"kind": "unsupported_claim", "severity": sev, "where": "x", "detail": "d"}
+    blocking = [[issue()] * 6, [issue()] * 3, [issue("critical")] + [issue()] * 5]
+    answers = ["Option A, outsource the excess.", "Option A, outsource the excess.",
+               "Option B, buy the software."]
+
+    class Flip(ScriptedLLM):
+        stories = 0
+        story_inputs: list[str] = []
+
+        def StoryDraft(self, user):
+            self.story_inputs.append(user)
+            d = super().StoryDraft(user)
+            d["answer"] = answers[self.stories]
+            self.stories += 1
+            return d
+
+        def Review(self, user):
+            self.reviews += 1
+            return {"issues": blocking[self.reviews - 1], "strongest_counterargument": "B",
+                    "ceo_questions": ["a", "b", "c"], "agrees_with_client_prior": False,
+                    "prior_agreement_justified": False, "verdict": "revise"}
+    llm = Flip()
+    eng, ws, _ = engagement(tmp_path, llm)
+    out = eng.run()
+    assert llm.reviews == 3 and ws.state.notes["shipped_draft"] == "story1"
+    assert out["draft"].answer == answers[1]                     # not the flipped last draft
+    unresolved = ws.state.notes["unresolved_review"]
+    assert len(unresolved) == 3 and all(i["severity"] == "major" for i in unresolved)
+    assert "YOUR PREVIOUS DRAFT" not in llm.story_inputs[0]
+    assert answers[0] in llm.story_inputs[1] and answers[1] in llm.story_inputs[2]
+    assert all("Keep its recommendation unless a BLOCKING issue" in s
+               for s in llm.story_inputs[1:])
+
+
+def test_best_reviewed_prefers_fewer_blocking_then_fewer_critical_then_later():
+    from consultant.agents.engagement_manager import best_reviewed
+    from consultant.agents.partner import Issue
+
+    def rv(*sevs):
+        return Review(issues=[Issue(kind="maths", severity=s, where="", detail="")
+                              for s in sevs], strongest_counterargument="", ceo_questions=[],
+                      agrees_with_client_prior=False, prior_agreement_justified=True,
+                      verdict="revise")
+    d = None
+    assert best_reviewed([(d, rv("major", "major")), (d, rv("major"))]) == 1
+    assert best_reviewed([(d, rv("major")), (d, rv("critical"))]) == 0
+    assert best_reviewed([(d, rv("major")), (d, rv("major"))]) == 1
+    assert best_reviewed([(d, rv("minor", "minor")), (d, rv("major"))]) == 0  # minor: comment
+
+
+def test_one_reconciled_model_supersedes_the_earlier_analyses(tmp_path):
+    # p033 had 10 analyses on conflicting assumptions; drafts swung between them. Before
+    # synthesis one model on consistent, explicit inputs replaces them in the brief.
+    from consultant.agents.engagement_manager import evidence_text
+
+    class Two(ScriptedLLM):
+        requests: list[str] = []
+
+        def Assessment(self, user):
+            a = super().Assessment(user)
+            a["analyses_needed"] = ["Option A value, capacity capped", "Option A value, uncapped"]
+            return a
+
+        def AnalysisCode(self, user):
+            self.requests.append(user)
+            if "RECONCILED" in user or "reconciled decision model" in user:
+                return {"name": "decision_model", "purpose": "one model",
+                        "code": "RESULT = {'inputs': {'price': 30}, 'assumptions': ['capacity "
+                                "uncapped, as the client said'], 'options': {'A': 74, 'B': 60},"
+                                " 'best': 'A', 'sensitivities': {'capped': {'A': 74, 'B': 9}}}"}
+            n = len(self.requests)
+            return {"name": f"option_value_{n}", "purpose": "x", "code": f"RESULT = {{'v': {n}}}"}
+    llm = Two()
+    eng, ws, _ = engagement(tmp_path, llm)
+    eng.run()
+    st = ws.state
+    model = st.notes["model"]["id"]
+    assert [a.id for a in st.analyses] == ["A1", "A2", "A3"] and model == "A3"
+    assert [a.superseded_by for a in st.analyses] == ["A3", "A3", None]
+    assert "option_value_1" in llm.requests[-1] and "option_value_2" in llm.requests[-1]
+    brief = evidence_text(ws, verified_only=True)
+    assert "A1: option_value_1 SUPERSEDED by A3" in brief and "{'v': 1}" not in brief
+    assert "A3 (RECONCILED DECISION MODEL" in brief and "'inputs': {'price': 30}" in brief
+
+
+def test_nothing_to_reconcile_with_one_analysis(tmp_path):
+    eng, ws, _ = engagement(tmp_path, ScriptedLLM())
+    eng.run()
+    assert ws.state.notes["model"] == {"id": "A1", "note": "nothing to reconcile"}
+    assert ws.state.analyses[0].superseded_by is None

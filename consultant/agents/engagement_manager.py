@@ -8,8 +8,12 @@ Case mode: evidence comes from the interviewer simulator (the 'client'). Real mo
 Research Associates on the open web. Every stage is a workspace step, so a killed run
 resumes where it stopped. Budget: investigation gets 70% of the profile's tokens, synthesis
 the rest, so a capped run still delivers (with open questions).
+
+Ablation B (budget profile with `synthesis: single`): the storyliner writes from the full
+context (_full_context) instead of the brief, and gets at most one revision.
 """
 
+import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Literal
@@ -17,13 +21,15 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from consultant import deliverables
-from consultant.agents import analyst, partner, storyliner
+from consultant.agents import analyst, interview, partner, storyliner
 from consultant.agents.research_associate import ResearchAssociate
 from consultant.config import profile as load_profile
+from consultant.deliverables import repair
 from consultant.deliverables.validate import validate_draft
 from consultant.knowledge import playbooks
 from consultant.knowledge.retrieval import Retriever, add_primer
 from consultant.knowledge.schema import CaseType
+from consultant.llm import StructuredOutputError
 from consultant.research.extract import extract_facts
 from consultant.research.fact_store import Fact
 from consultant.research.verify import verify_facts
@@ -33,6 +39,8 @@ from consultant.workspace import Hypothesis, IssueNode, Workspace
 
 MAX_REVIEW_ROUNDS = 3
 INVESTIGATE_SHARE = 0.7
+STALE_STOP = 2  # case mode: this many replies in a row with nothing new end the interview
+NO_INFO = "I don't have that information"  # how the case interviewer declines
 
 
 # ---- LLM output schemas -------------------------------------------------------------------
@@ -93,7 +101,8 @@ PLAN_SYS = ("Build a MECE issue tree for the question (flat list of nodes with p
             "root has parent null) and 3-6 falsifiable hypotheses on its most likely branches, "
             "ranked. Each hypothesis says what would prove or kill it and which data questions "
             "to ask. Avoid simply adopting the client's initial belief: include competing "
-            "explanations. Data questions must be self-contained search questions: name the "
+            "explanations. Unless this is a case interview (then follow the CASE INTERVIEW "
+            "note), data questions must be self-contained search questions: name the "
             "company/entity, the metric and the period (e.g. 'Acme Ltd consolidated EBITDA "
             "margin FY2023-24'), never 'the company'. If the client did not state the "
             "direction or size of a change, the top-priority question must establish it "
@@ -105,21 +114,77 @@ ASSESS_SYS = ("Update every hypothesis from the evidence: supported, killed, nee
               "for quantitative analyses where numbers would settle a hypothesis. Propose the "
               "next questions for unresolved priority hypotheses. Set done when the priority "
               "hypotheses are resolved or more evidence would not change the answer.")
+# case mode: the questions go to the client in conversation, not to a search engine
+CASE_QUESTIONS = ("CASE INTERVIEW: your questions go to the client, in conversation. Write "
+                  "each as one short question with one subject, the way you would say it to "
+                  "the client, not a search query. Never ask what the evidence already "
+                  "answers or what is in ALREADY ASKED; fewer, sharper questions are better.")
+RESPOND_SYS = ("You are the candidate in a consulting case interview. The interviewer's last "
+               "message asks you something or tells you what to look at next. Answer it "
+               "directly first: your structure or your hypotheses for that point, in 2-4 short "
+               "sentences that use what the client has already told you. Then, only if you "
+               "need data to test them, ask for the single most useful piece in one short "
+               "question. Never repeat a question already asked.")
+
+
+RECONCILE = (
+    "Build ONE reconciled decision model for the client question below. It replaces the "
+    "earlier analyses listed, which disagree with each other on their assumptions. Use one "
+    "consistent set of inputs from the client's data (FACTS) and labelled estimates. In "
+    "RESULT put: 'inputs' (dict: input name -> value, every number the model uses), "
+    "'assumptions' (list of strings: each modelling choice and its source, e.g. which reading "
+    "of an ambiguous client statement you took and why the client's data supports it), "
+    "'options' (dict: each option the client is weighing, or each driver for a diagnosis -> "
+    "its value on the success metric), 'best' (the option the numbers favour) and "
+    "'sensitivities' (dict: the alternative readings where the earlier analyses disagreed -> "
+    "the resulting option values). Never invent data.")
+
+
+class CandidateTurn(BaseModel):
+    message: str = Field(description="what you say to the interviewer")
 
 
 def fallback_draft(ws: Workspace) -> storyliner.Draft:
-    """Deterministic draft when no LLM draft could be written (budget exhausted): report what
-    is known, claim nothing new, mark confidence low."""
+    """Deterministic draft when no LLM draft could be written (budget exhausted). Still a best
+    answer: the best-supported hypothesis (supported first, then most evidence, then
+    priority), at low confidence, with what would change it. Claims nothing new."""
     st = ws.state
+    rank = {"supported": 0, "needs_more": 1, "open": 2, "killed": 3}
+    live = sorted((h for h in st.hypotheses if h.status != "killed"),
+                  key=lambda h: (rank[h.status], -len(h.evidence_fact_ids + h.analysis_ids),
+                                 h.priority))
     status = "; ".join(f"{h.id} {h.status}: {h.statement}" for h in st.hypotheses) or "none"
+    if live:
+        best = live[0]
+        answer = (f"Best current answer (low confidence): act on {best.id}, '{best.statement}', "
+                  f"the best-supported explanation so far ({best.status}).")
+        refs = [f"F{i}" for i in best.evidence_fact_ids] + list(best.analysis_ids)
+        change = [f"Evidence against {best.id}"] + [f"Evidence for {h.id}: {h.statement}"
+                                                    for h in live[1:3]]
+    else:
+        answer = "No hypothesis survived the investigation; no recommendation can be grounded."
+        refs, change = [], ["Any new evidence on the open questions"]
     return storyliner.Draft(
-        answer="No answer could be synthesised within the budget. Hypothesis status so far: "
-               f"{status}.",
+        answer=answer,
         arguments=[storyliner.Argument(title="Investigation was cut short by the budget cap",
-                                       text="See the open questions; resume or rerun with a "
-                                            "larger profile.", refs=[])],
-        risks=["Conclusions here are incomplete."], next_steps=["Resume with a larger budget."],
-        open_questions=list(st.open_questions), confidence="low", slides=[])
+                                       text=f"Hypothesis status so far: {status}.",
+                                       refs=refs)],
+        risks=["Conclusions here are incomplete."],
+        next_steps=["Resume with a larger budget to test the recommendation."],
+        open_questions=list(st.open_questions), confidence="low", slides=[],
+        confidence_reason="the budget ran out before synthesis; this rests on hypothesis "
+                          "status, not a full write-up",
+        key_evidence=refs[:3], would_change=change)
+
+
+def best_reviewed(reviewed: list[tuple[storyliner.Draft, "partner.Review"]]) -> int:
+    """Index of the draft to ship: fewest blocking issues, then fewest critical ones, then
+    the later draft (it has absorbed more review). The last draft used to ship, even when its
+    own review found it worse than an earlier one."""
+    def key(i: int):
+        blocking = reviewed[i][1].blocking()
+        return len(blocking), sum(b.severity == "critical" for b in blocking), -i
+    return min(range(len(reviewed)), key=key)
 
 
 def evidence_text(ws: Workspace, verified_only: bool = False, limit: int = 60) -> str:
@@ -127,10 +192,23 @@ def evidence_text(ws: Workspace, verified_only: bool = False, limit: int = 60) -
     ids and short claims, not raw pages)."""
     eid = ws.state.engagement_id
     facts = ws.facts.eligible(eid) if verified_only else ws.facts.facts(eid)
-    rows = [f"F{f.id}: {f.claim[:220]} | value={f.value} {f.unit} | period={f.period} | "
-            f"source={f.source_type}" for f in facts[-limit:]]
-    rows += [f"A{a.id[1:]}: {a.name} -> {a.result}" if a.ok else
-             f"A{a.id[1:]}: {a.name} FAILED ({a.error})" for a in ws.state.analyses]
+    # client replies are the case data: always all of them, in full (cut to 220 chars they
+    # showed ~82 chars of each reply); web facts are clipped and limited to the latest
+    client = [f for f in facts if f.source_type == "client"]
+    web = [f for f in facts if f.source_type != "client"][-limit:]
+    rows = [f"F{f.id}: {f.claim if f.source_type == 'client' else f.claim[:220]} | "
+            f"value={f.value} {f.unit} | period={f.period} | source={f.source_type}"
+            for f in sorted(client + web, key=lambda f: f.id)]
+    model = ws.state.notes.get("model", {}).get("id")
+
+    def analysis(a) -> str:
+        if not a.ok:
+            return f"A{a.id[1:]}: {a.name} FAILED ({a.error})"
+        if a.superseded_by:
+            return f"A{a.id[1:]}: {a.name} SUPERSEDED by {a.superseded_by} (don't cite)"
+        tag = " (RECONCILED DECISION MODEL: the numbers to use)" if a.id == model else ""
+        return f"A{a.id[1:]}{tag}: {a.name} -> {a.result}"
+    rows += [analysis(a) for a in ws.state.analyses]
     rows += [f"S{a.id}: {a.name} = {a.value} {a.unit} (estimate: {a.rationale[:100]})"
              for a in ws.facts.assumptions(eid)]
     return "\n".join(rows) or "(no evidence yet)"
@@ -156,6 +234,8 @@ class Engagement:
                                    "calls": self.prof["max_calls"],
                                    "searches": self.prof["max_searches"],
                                    "pages": self.prof["max_pages"]})
+        # synthesis is guaranteed the rest of the cap; it also gets whatever investigation
+        # leaves unspent (set in run(), once investigation is over)
         self.synthesis = Budget({"tokens": cap - int(cap * INVESTIGATE_SHARE)})
         if ws.state.mode == "case" and interviewer is None:
             raise ValueError("case mode needs an interviewer (the simulated client)")
@@ -176,10 +256,14 @@ class Engagement:
         """Store a client (interviewer) answer as sourced facts: the reply itself, plus any
         numbers in it via the same verbatim-quote extractor used for web pages."""
         eid, src = self.ws.state.engagement_id, f"case://{self.iv.case.id}/interviewer"
+        # the reply itself is the claim, whole; a reply already on file is the same fact
+        same = [f.id for f in self.ws.facts.facts(eid)
+                if f.source_type == "client" and f.claim == reply]
+        if same:
+            return same
         base = dict(engagement_id=eid, source_url=src, source_title="Client (case data)",
                     source_type="client", credibility=5)
-        ids = [self.ws.facts.add(Fact(claim=f"Client, asked '{question[:120]}': "
-                                            f"{reply[:300]}", quote=reply, **base))]
+        ids = [self.ws.facts.add(Fact(claim=reply, quote=reply, **base))]
         if any(ch.isdigit() for ch in reply):
             page = Page(src, "Client (case data)", reply)
             found, _ = extract_facts(self.llm, page, question)
@@ -188,17 +272,61 @@ class Engagement:
             self.ws.facts.set_verified(i, True, "client-provided case data")
         return ids
 
+    # ---- case-mode interview: a conversation, not a data API ----------------------------
+    def _interview_over(self) -> bool:
+        """Two replies in a row with nothing new end the interview; max_questions is only a
+        ceiling (the first Claude run spent all 12 in every case, 58-92% of them wasted)."""
+        n = self.ws.state.notes
+        return (n.get("stale_run", 0) >= STALE_STOP
+                or len(self.iv.log) >= self.prof.get("max_questions", 10))
+
+    def _turn(self, message: str) -> str:
+        """Say one thing to the interviewer; store what's new; track replies with nothing new."""
+        st = self.ws.state
+        seen = {e["reply"] for e in self.iv.log}
+        reply = self.iv.ask(message)
+        new = not reply.startswith(NO_INFO) and reply not in seen
+        if new:
+            self._client_fact(message, reply)
+        st.notes["stale_run"] = 0 if new else st.notes.get("stale_run", 0) + 1
+        st.notes["interview_log"] = self.iv.log  # survives a mid-run kill
+        self.ws.save()
+        return reply
+
+    def _respond(self, prompt: str) -> str:
+        """Answer the interviewer's prompt with a structure or hypotheses (guided cases only
+        hand over their data to a candidate who engages with the prompt)."""
+        convo = "\n".join(f"CANDIDATE: {e['question']}\nINTERVIEWER: {e['reply']}"
+                          for e in self.iv.log)
+        return self._ask(RESPOND_SYS, f"CASE: {self.ws.state.problem_statement}\n"
+                                      f"HYPOTHESES:\n{hypotheses_text(self.ws) or '(none yet)'}"
+                                      f"\n\nCONVERSATION SO FAR:\n{convo}\n\nINTERVIEWER'S LAST "
+                                      f"MESSAGE: {prompt}", CandidateTurn).message
+
     def _ask_client(self, questions: list[str]) -> None:
+        st = self.ws.state
         for q in questions:
-            asked = len(self.iv.log)
-            if asked >= self.prof.get("max_questions", 10):
-                self.ws.state.open_questions.append(q)
+            if self._interview_over():
+                st.open_questions.append(q)
                 continue
-            reply = self.iv.ask(q)
-            if not reply.startswith("I don't have that information"):
-                self._client_fact(q, reply)
-            self.ws.state.notes["interview_log"] = self.iv.log  # survives a mid-run kill
-            self.ws.save()
+            asked = [e["question"] for e in self.iv.log]
+            if interview.search_style(q) or interview.repeats(q, asked):
+                st.notes.setdefault("not_asked", []).append(q)  # a search query, or a re-ask
+                continue
+            reply = self._turn(q)
+            while (interview.prompts_candidate(reply) and not reply.startswith(NO_INFO)
+                   and not self._interview_over()):
+                reply = self._turn(self._respond(reply))
+
+    def _case_note(self) -> str:
+        """Case mode: questions are said to the client (the plan prompt asks for search
+        queries, which went to the client and were never answered) and not repeated."""
+        if self.ws.state.mode != "case":
+            return ""
+        asked = "\n".join(f"- {e['question']}" for e in self.iv.log) or "(nothing yet)"
+        over = ("\nThe interview is over (the client had nothing new): propose no questions."
+                if self._interview_over() else "")
+        return f"\n\n{CASE_QUESTIONS}{over}\nALREADY ASKED:\n{asked}"
 
     def _research(self, questions: list[str], hid: str | None = None) -> None:
         eid = self.ws.state.engagement_id
@@ -247,10 +375,10 @@ class Engagement:
         similar = self.retriever.similar_cases(st.problem_statement, 3)
         refs = "\n".join(f"- {h.doc.title} ({h.doc.meta['case_type']}): {h.doc.text[:300]} "
                          f"| structure used: {h.doc.meta['structure'][:300]}" for h in similar)
-        user = (f"QUESTION: {st.scope['restated_question']}\nSCOPE: {st.scope}\n"
+        user = (f"QUESTION: {self._question()}\nSCOPE: {st.scope}\n"
                 f"EVIDENCE SO FAR:\n{evidence_text(self.ws)}\n\nPLAYBOOK:\n"
                 f"{playbooks.playbook(st.case_type)}\n\nSIMILAR PAST CASES (patterns only):\n"
-                f"{refs or '(none)'}")
+                f"{refs or '(none)'}" + self._case_note())
         plan = self._ask(PLAN_SYS, user, TreePlan)
         nodes = {n.id: IssueNode(id=n.id, text=n.text) for n in plan.nodes}
         root = None
@@ -280,9 +408,9 @@ class Engagement:
             self._research(questions, open_h[0].id if open_h else None)
         for h in open_h:
             pending.pop(h.id, None)
-        a = self._ask(ASSESS_SYS, f"QUESTION: {st.scope['restated_question']}\nHYPOTHESES:\n"
+        a = self._ask(ASSESS_SYS, f"QUESTION: {self._question()}\nHYPOTHESES:\n"
                                   f"{hypotheses_text(self.ws)}\n\nEVIDENCE:\n"
-                                  f"{evidence_text(self.ws)}", Assessment)
+                                  f"{evidence_text(self.ws)}" + self._case_note(), Assessment)
         known = self._known_refs()
         for u in a.updates:
             if any(h.id == u.id for h in st.hypotheses):
@@ -299,10 +427,51 @@ class Engagement:
                                                 branch_id=h.branch_id, priority=h.priority))
                 pending[h.id] = h.questions
         for req in a.analyses_needed:
-            analyst.analyse(self.llm, self.ws, req, [h.id for h in open_h])
+            try:
+                analyst.analyse(self.llm, self.ws, req, [h.id for h in open_h])
+            except StructuredOutputError as e:  # one failed analysis isn't fatal
+                self.ws.decide("analyst", f"analysis failed: {req[:120]}", str(e))
         resolved = all(h.status in ("supported", "killed") for h in st.hypotheses
                        if h.priority == 1)
         return {"next_questions": a.next_questions, "done": a.done or resolved}
+
+    def _repair(self, d: storyliner.Draft) -> dict:
+        """Targeted pass on validator flags; any number still flagged is removed as unverified
+        (the validator's points in the last review are then settled, so they're dropped)."""
+        d, removed = repair.repair(self.llm, self.ws, d, evidence_text(self.ws, verified_only=True))
+        st = self.ws.state
+        st.notes["unverified_removed"] = removed
+        st.notes["unresolved_review"] = [i for i in st.notes.get("unresolved_review") or []
+                                         if not i["detail"].startswith("[validator]")]
+        if removed:
+            self.ws.decide("system", "removed unverified figures", "; ".join(removed))
+        return d.model_dump()
+
+    def _reconcile(self) -> dict:
+        """One decision model before synthesis: p033 had 10 analyses on conflicting
+        assumptions and the drafts swung between whichever one the last review favoured.
+        The earlier analyses stay on file (and in model.xlsx) but are marked superseded."""
+        st = self.ws.state
+        ok = [a for a in st.analyses if a.ok and not a.superseded_by]
+        if len(ok) < 2:
+            return {"id": ok[0].id if ok else None, "note": "nothing to reconcile"}
+        earlier = "\n".join(f"- {a.id} {a.name}: {a.purpose} -> "
+                            f"{json.dumps(a.result, default=str)[:600]}" for a in ok)
+        request = (f"{RECONCILE}\n\nCLIENT QUESTION: {self._question()}\nSUCCESS METRIC: "
+                   f"{st.scope.get('success_metric', '')}\n\nEARLIER ANALYSES:\n{earlier}")
+        try:
+            rec = analyst.analyse(self.llm, self.ws, request,
+                                  [h.id for h in st.hypotheses if h.priority == 1])
+        except StructuredOutputError as e:
+            self.ws.decide("analyst", "reconciled model failed", str(e))
+            return {"id": None, "note": "failed"}
+        if not (rec.ok and rec.result):
+            return {"id": None, "note": f"failed: {rec.error}"}
+        for a in ok:
+            a.superseded_by = rec.id
+        self.ws.decide("analyst", f"{rec.id} reconciles {', '.join(a.id for a in ok)}",
+                       "one decision model on consistent inputs")
+        return {"id": rec.id, "replaces": [a.id for a in ok]}
 
     def _known_refs(self) -> set[str]:
         eid = self.ws.state.engagement_id
@@ -310,13 +479,36 @@ class Engagement:
                 | {f"A{a.id[1:]}" for a in self.ws.state.analyses}
                 | {f"S{a.id}" for a in self.ws.facts.assumptions(eid)})
 
+    def _question(self) -> str:
+        """The restated question plus the problem as the client stated it (restating can drop
+        what the client said)."""
+        st = self.ws.state
+        return (f"{st.scope['restated_question']}\nAS THE CLIENT STATED THE PROBLEM: "
+                f"{st.problem_statement}")
+
     def _brief(self) -> str:
         st = self.ws.state
-        return (f"CLIENT QUESTION: {st.scope['restated_question']}\nOBJECTIVE: "
+        return (f"CLIENT QUESTION: {self._question()}\nOBJECTIVE: "
                 f"{st.scope['objective']} | METRIC: {st.scope['success_metric']} | HORIZON: "
                 f"{st.scope['horizon']}\nHYPOTHESES:\n{hypotheses_text(self.ws)}\n\n"
                 f"EVIDENCE:\n{evidence_text(self.ws, verified_only=True)}\n\nOPEN QUESTIONS: "
                 f"{'; '.join(st.open_questions) or 'none'}")
+
+    def _full_context(self) -> str:
+        """Ablation B (profile `synthesis: single`): what one writer sees instead of the brief:
+        the problem as the client stated it, the whole interview, the decision model with its
+        inputs and every fact in full (no hypotheses, no clipping)."""
+        st, eid = self.ws.state, self.ws.state.engagement_id
+        convo = "\n".join(f"CANDIDATE: {e['question']}\nINTERVIEWER: {e['reply']}"
+                          for e in (self.iv.log if self.iv else [])) or "(no interview)"
+        live = [a for a in st.analyses if a.ok and not a.superseded_by]
+        model = "\n".join(f"A{a.id[1:]}: {a.name}: {a.purpose}\n"
+                          f"{json.dumps(a.result, indent=1, default=str)}" for a in live)
+        facts = "\n".join(f"F{f.id}: {f.claim} | value={f.value} {f.unit} | period={f.period}"
+                          f" | source={f.source_type}" for f in self.ws.facts.facts(eid))
+        return (f"THE CLIENT'S PROBLEM, AS STATED: {st.problem_statement}\n\nFULL INTERVIEW "
+                f"TRANSCRIPT:\n{convo}\n\nRECONCILED DECISION MODEL (with its inputs):\n"
+                f"{model or '(none)'}\n\nALL FACTS:\n{facts or '(none)'}")
 
     def _finalise_real_mode(self) -> dict:
         """Verify citations; teach the primer index about industries it didn't know."""
@@ -334,11 +526,12 @@ class Engagement:
         """Partner review plus the deterministic validator: an untraceable number or a
         topic-only slide title is a major issue even if the partner missed it."""
         st = self.ws.state
-        rv = partner.review(self.llm, st.scope["restated_question"],
+        rv = partner.review(self.llm, self._question(),
                             st.scope.get("client_prior", ""), storyliner.render_text(d),
                             evidence_text(self.ws, verified_only=True))
         for i in validate_draft(self.ws, d):
-            kind = "unsupported_claim" if i["kind"] != "no_action_title" else "other"
+            kind = {"no_action_title": "wording", "deferred_answer": "non_sequitur"}.get(
+                i["kind"], "unsupported_claim")
             rv.issues.append(partner.Issue(kind=kind, severity="major", where=i["where"],
                                            detail=f"[validator] {i['detail']}"))
             rv.verdict = "revise"
@@ -365,27 +558,46 @@ class Engagement:
         if st.mode == "real" and self.web is not None:
             ws.step("verify", self._finalise_real_mode)
         draft, rv = None, None
+        # ponytail: spend is noted per run; a run killed mid-investigation (quota) isn't counted
+        st.notes["investigate_tokens"] = (st.notes.get("investigate_tokens", 0)
+                                          + self.investigate.spent["tokens"])
+        self.synthesis.limits["tokens"] = max(self.synthesis.limits["tokens"],
+                                              self.prof["max_tokens"]
+                                              - st.notes["investigate_tokens"])
+        reviewed: list[tuple[storyliner.Draft, partner.Review]] = []
+        single = self.prof.get("synthesis") == "single"  # ablation B: one writer, one revision
+        brief, rounds = (self._full_context, 2) if single else (self._brief, MAX_REVIEW_ROUNDS)
         with self.llm.scoped(self.synthesis):
             try:
+                ws.step("model", self._reconcile)
                 draft = storyliner.Draft(**ws.step(
-                    "story0", lambda: storyliner.write(self.llm, self._brief()).model_dump()))
-                for r in range(MAX_REVIEW_ROUNDS):
+                    "story0", lambda: storyliner.write(self.llm, brief()).model_dump()))
+                for r in range(rounds):
                     rv = partner.Review(**ws.step(f"review{r}", lambda d=draft: self._review(d)))
-                    if rv.verdict == "approve" or r == MAX_REVIEW_ROUNDS - 1:
+                    reviewed.append((draft, rv))
+                    if rv.verdict == "approve" or r == rounds - 1:
                         break
                     draft = storyliner.Draft(**ws.step(
-                        f"story{r + 1}", lambda rv=rv: storyliner.write(
-                            self.llm, self._brief(), partner.format_review(rv)).model_dump()))
-                    rv = None  # the new draft hasn't been reviewed yet
+                        f"story{r + 1}", lambda rv=rv, d=draft: storyliner.write(
+                            self.llm, brief(), partner.format_review(rv),
+                            previous=d).model_dump()))
             except BudgetExceeded as e:
                 stopped = stopped or str(e)
                 ws.decide("system", "synthesis stopped: budget cap", str(e))
-                st.open_questions.append("Synthesis stopped at the budget cap: the latest draft "
-                                         "was delivered without a further review round.")
-        if draft is None:
+                st.open_questions.append("Synthesis stopped at the budget cap: the best-reviewed "
+                                         "draft was delivered without a further review round.")
+        if reviewed:  # ship the reviewed draft with the fewest blocking issues, not the last
+            k = best_reviewed(reviewed)
+            draft, rv = reviewed[k]
+            st.notes["shipped_draft"] = f"story{k}"
+            if rv.verdict != "approve":
+                st.notes["unresolved_review"] = [i.model_dump() for i in rv.blocking()]
+        elif draft is None:
             draft = fallback_draft(ws)
-        if rv is not None and rv.verdict != "approve":
-            st.notes["unresolved_review"] = [i.model_dump() for i in rv.blocking()]
+        with self.llm.scoped(self.synthesis):
+            draft = storyliner.Draft(**ws.step("repair", lambda: self._repair(draft)))
         ws.save()
         ws.step("deliver", lambda: deliverables.render(ws, draft))
-        return {"stopped": stopped, "draft": draft, "deliverables": st.deliverables}
+        return {"stopped": stopped, "draft": draft, "deliverables": st.deliverables,
+                # this run's remote tokens (a resumed run counts only what it spent itself)
+                "tokens": self.investigate.spent["tokens"] + self.synthesis.spent["tokens"]}

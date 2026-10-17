@@ -1,0 +1,36 @@
+# Claude through the Claude Code CLI on the user's Pro subscription (CONSULTANT_MODELS_FILE=
+# models.claude.yaml). No API key: llm/claude_cli.py strips ANTHROPIC_API_KEY from the child
+# process so the CLI uses the logged-in plan. Sampling params (temperature, max_tokens) aren't
+# exposed by the CLI and are ignored. Concurrency 1; usage limits are waited out (retry every
+# limit_wait_s, give up after max_limit_wait_h and stop cleanly so the run can be resumed).
+# Use with the `claude` budget profile (config/budgets.yaml).
+
+providers:
+  claude_cli:
+    type: claude_cli
+    limit_wait_s: 1200         # retry every 20 minutes when the usage limit is hit
+    max_limit_wait_h: 72
+  ollama:                      # kept so local-only tools still resolve; no role uses it here
+    base_url: ${OLLAMA_BASE_URL:-http://localhost:11434}/v1
+    api_key: ollama
+    local: true
+
+models:
+  claude_cli/sonnet: {context: 1000000}
+  claude_cli/opus:   {context: 1000000}
+  claude_cli/haiku:  {context: 1000000}
+
+roles:
+  agent:              {model: claude_cli/opus}     # the single agent (consultant/agent.py);
+                                                   # models.claude-sonnet.yaml: Sonnet, cheaper
+  engagement_manager: {model: claude_cli/sonnet}
+  research_associate: {model: claude_cli/sonnet}   # research synthesis: plans, gap checks, briefs
+  analyst:            {model: claude_cli/sonnet}
+  storyliner:         {model: claude_cli/sonnet}
+  partner:            {model: claude_cli/sonnet}
+  baseline:           {model: claude_cli/sonnet}   # same model as the engagement manager
+  judge:              {model: claude_cli/opus}     # eval only
+  interviewer:        {model: claude_cli/haiku}    # case-mode simulator
+  extractor:          {model: claude_cli/haiku}    # page reading: facts out of fetched pages
+  case_extractor:     {model: claude_cli/haiku}    # casebook extraction (build time)
+  case_extractor_alt: {model: claude_cli/haiku}

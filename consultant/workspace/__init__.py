@@ -72,6 +72,8 @@ class AnalysisRecord(BaseModel):
     # live Excel formulas in model.xlsx and checked against `result`
     formulas: list[dict[str, Any]] = Field(default_factory=list)
     formula_issues: list[str] = Field(default_factory=list)
+    # set when the reconciled decision model replaces this analysis (kept for audit)
+    superseded_by: str | None = None
 
 
 class WorkspaceState(BaseModel):
